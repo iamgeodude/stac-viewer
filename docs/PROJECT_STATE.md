@@ -47,6 +47,11 @@ A SvelteKit SPA (Svelte 5 runes) front end for a STAC API. Homepage lists collec
     - `MetaValue.svelte` is a **recursive renderer** (`<svelte:self>`): scalars → text/link; arrays of scalars → pills; flat objects → subheader→value lists; **nested objects → key|value tables whose cells recurse into subtables**; **arrays of objects → tables** with columns ordered by a STAC `COLUMN_HINTS` registry (providers/links/assets/item_assets) then the union of keys; numeric `{minimum,maximum}` → "min – max"; `extent` special-cased to formatted Spatial (W,S,E,N) + Temporal; depth-6 guard. Helpers (`valueKind`, `columnsFor`, `isRange`, `humanize`, `looksLikeUrl`, `sectionId`) live in `stacMeta.js`.
     - **Loading indicator:** `metaReady` defers mounting the (potentially large/deep) metadata tree by one `requestAnimationFrame`, showing a "Rendering metadata…" spinner so navigation stays snappy. Removed the dead `temporal` derived and pruned the page CSS that moved into `MetaValue`; kept `spatialBbox` (drives the draw-bbox modal).
     - **Draw-bbox modal blank-canvas fix:** `DrawBboxModal.svelte` now attaches a `ResizeObserver` to the map container. The modal is a freshly-mounted fixed-position element, so the container was 0×0 when the map (and the fast inline-style `'load'` resize) ran — leaving a blank WebGL canvas (no basemap, no drawable rectangle). The observer resizes the map once layout settles. This was a **latent** bug (the draw-bbox feature had never been browser-verified), not caused by the metadata work.
+19. **GitHub Pages auto-deploy via official Actions pipeline** (`.github/workflows/deploy.yml`; commit `a5fbd0a`) — on every push/merge to `master` (and `workflow_dispatch`), build the SPA on **Node 24** with `BASE_PATH=/stac-viewer`, copy `index.html`→`404.html`, and deploy via `actions/configure-pages` + `upload-pages-artifact` + `deploy-pages`. Pages **source switched from the `gh-pages` branch to "GitHub Actions"** (`build_type: workflow`); the `gh-pages` branch was deleted. `npm run deploy` now just dispatches the workflow (`gh workflow run deploy.yml`); the `gh-pages` npm dep was removed. **`docs/DEPLOYMENT.md` rewritten** for the Actions model. Verified live (build✓→deploy✓, root 200 + correct base, deep-link shell).
+20. **Download UX: instant pause, queue dedupe, no-prompt duplicate check** (addresses three of the open questions below; `queue.js`, `download.js`, `downloadController.js`, `src/routes/collections/[id]/+page.svelte`):
+    - **Instant pause:** `writeAsset` now takes an `AbortSignal` passed to `fetch`. The controller creates an `AbortController` per item; `pause()` (and the cross-tab `'pause'` relay) call `abortCurrent()` to abort the in-flight transfer immediately instead of waiting for the file to finish. An aborted item is **requeued as `pending`** (not dead-lettered) — `signal.aborted` distinguishes a pause from a real failure — and `writeAsset` discards the partial file, so it restarts cleanly on resume.
+    - **Queue dedupe on enqueue:** `enqueueAssets` is now async, skipping assets whose `href` is already in the queue (pending/downloading) or duplicated within the batch, and returns the count actually added. `finalizeQueue` (detail page) uses that count for the confirmation note ("Added N… (M already queued)"). The duplicate *modal* still guards history/on-disk dupes; this stops the queue holding duplicate rows from repeated clicks.
+    - **Folder-prompt UX:** the duplicate check now calls `acquireDirectory(false)` — it no longer forces a folder picker just to check on-disk; on-disk dedupe runs only when a folder is already authorized, otherwise it's history-only. The actual folder prompt happens at download start (`startDownloads`), still within the click gesture.
 
 ## Key decisions / conventions
 
@@ -66,11 +71,10 @@ A SvelteKit SPA (Svelte 5 runes) front end for a STAC API. Homepage lists collec
 
 ## Open questions / possible next steps
 
-- Confirm the "prompt for folder up front" UX feels right; alternative is "only run the on-disk check when permission is already granted" (no extra prompt). Easy toggle in `downloadSelectedAssets` (call `acquireDirectory(false)` / query-only).
-- Pause is **between files** (in-flight file finishes). Could change to abort the in-flight transfer for instant stop (discards partial) if desired.
-- No dedupe on enqueue across repeated clicks (queue can hold duplicate rows); the duplicate *modal* is the guard, not the queue itself.
 - `sortby=+id` is sent but ignored by some APIs (no-op); enforce ordering via `POST /search` if a target API needs it.
 - Large pages with all rows expanded render many asset sub-tables at once (heavier first paint) — fine, just noted.
+
+_Resolved (see timeline 20):_ folder-prompt-up-front UX (now `acquireDirectory(false)` — no forced prompt for the duplicate check), pause-between-files (now an **instant** abort that requeues the file), and queue dedupe on enqueue.
 
 ## Map gotcha to remember
 

@@ -69,12 +69,14 @@ export async function fileExists(dirHandle, item) {
 	}
 }
 
-/** Ensure a unique filename within a directory for this run. */
-function uniqueName(name, used) {
-	if (!used.has(name)) {
-		used.add(name);
-		return name;
-	}
+/**
+ * Find a filename not yet used in this directory this run. Pure — does NOT
+ * reserve the name; the caller reserves (`used.add`) only after a *successful*
+ * write, so a paused/aborted-then-resumed download reuses its original name
+ * instead of gaining a "-1" suffix.
+ */
+function freeName(name, used) {
+	if (!used.has(name)) return name;
 	const dot = name.lastIndexOf('.');
 	const base = dot > 0 ? name.slice(0, dot) : name;
 	const ext = dot > 0 ? name.slice(dot) : '';
@@ -84,7 +86,6 @@ function uniqueName(name, used) {
 		candidate = `${base}-${i}${ext}`;
 		i++;
 	} while (used.has(candidate));
-	used.add(candidate);
 	return candidate;
 }
 
@@ -97,12 +98,13 @@ export function pickDirectory() {
  * Fetch one asset and stream it into
  *   <catalog name>/<collection name>/<item id>/<filename>
  * within the chosen directory, reporting byte progress via onProgress.
- * Throws on any failure (HTTP, CORS, connection drop, write); on a mid-stream
- * failure the partially-written file is aborted/discarded.
+ * Throws on any failure (HTTP, CORS, connection drop, write) and on abort (the
+ * passed AbortSignal — used by Pause for an instant stop); on a mid-stream
+ * failure or abort the partially-written file is aborted/discarded.
  * @returns {Promise<number>} total bytes written
  */
-export async function writeAsset(dirHandle, item, usedByDir, onProgress) {
-	const res = await fetch(item.href);
+export async function writeAsset(dirHandle, item, usedByDir, onProgress, signal) {
+	const res = await fetch(item.href, signal ? { signal } : undefined);
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
 	const total = Number(res.headers.get('Content-Length')) || 0;
@@ -116,7 +118,7 @@ export async function writeAsset(dirHandle, item, usedByDir, onProgress) {
 		used = new Set();
 		usedByDir.set(dirKey, used);
 	}
-	const name = uniqueName(baseName, used);
+	const name = freeName(baseName, used);
 
 	const fileHandle = await targetDir.getFileHandle(name, { create: true });
 	const writable = await fileHandle.createWritable();
@@ -141,7 +143,7 @@ export async function writeAsset(dirHandle, item, usedByDir, onProgress) {
 			onProgress?.(loaded, loaded);
 		}
 	} catch (e) {
-		// Discard the partial file so a failed download doesn't leave a stub.
+		// Discard the partial file so a failed/aborted download doesn't leave a stub.
 		try {
 			await writable.abort?.();
 		} catch {
@@ -149,5 +151,8 @@ export async function writeAsset(dirHandle, item, usedByDir, onProgress) {
 		}
 		throw e;
 	}
+	// Reserve the name only now that the file is fully written, so an aborted
+	// (paused) attempt doesn't claim the name and force a "-1" on resume.
+	used.add(name);
 	return loaded;
 }
