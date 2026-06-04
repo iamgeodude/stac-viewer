@@ -1,116 +1,97 @@
 # Deployment — GitHub Pages
 
-The app is deployed as a static SPA to **GitHub Pages**.
+The app is deployed as a static SPA to **GitHub Pages** via the **official GitHub
+Actions Pages pipeline**. Every push/merge to `master` builds and deploys
+automatically.
 
 - **Live site:** https://iamgeodude.github.io/stac-viewer/
-- **Hosting model:** *project* Pages site for `iamgeodude/stac-viewer`, served
-  from the **`gh-pages` branch** (path `/`), HTTPS enforced. The `gh-pages`
-  branch holds only built output and is overwritten on every deploy — never edit
-  it by hand.
-- **One-command deploy:** `npm run deploy` (details below).
+- **Hosting model:** *project* Pages site for `iamgeodude/stac-viewer`. Pages
+  **source = "GitHub Actions"** (`build_type: workflow`) — the site is served
+  from an uploaded build artifact, **not** from a branch. (The old `gh-pages`
+  branch is obsolete and may be deleted.)
+- **CI:** `.github/workflows/deploy.yml` runs on push to `master` (and
+  `workflow_dispatch`).
+
+## Pipeline (`.github/workflows/deploy.yml`)
+
+Two jobs on **Node 24**:
+
+1. **build** — `actions/checkout` → `actions/configure-pages` (sets the Pages
+   source to GitHub Actions) → `actions/setup-node` (node 24, npm cache) →
+   `npm ci` → build → `actions/upload-pages-artifact` (uploads `build/`).
+   The build step is:
+   ```
+   BASE_PATH=/stac-viewer npm run build
+   cp build/index.html build/404.html
+   ```
+2. **deploy** — `actions/deploy-pages` publishes the artifact to the
+   `github-pages` environment; its output is the live URL.
+
+Required permissions: `pages: write`, `id-token: write`, `contents: read`.
+A `concurrency: { group: pages }` guard prevents overlapping deploys.
 
 ## Why a base path (`/stac-viewer`)
 
-A project Pages site is served under a sub-path (`/stac-viewer/`), not the domain
-root. So `svelte.config.js` sets:
+A project Pages site is served under a sub-path. `svelte.config.js` sets
+`paths.base = process.env.BASE_PATH || ''` — empty for local `npm run dev` /
+`npm run build` (root), and the CI build sets `BASE_PATH=/stac-viewer`.
 
-```js
-paths: { base: process.env.BASE_PATH || '' }
-```
-
-- Empty for local `npm run dev` / `npm run build` (app stays at root).
-- The deploy script sets `BASE_PATH=/stac-viewer` so the built site resolves
-  assets and routes under that prefix.
-
-**SvelteKit does NOT auto-prepend `base` to hardcoded root-relative links.** Every
-internal link therefore imports `base` from `$app/paths` and uses it:
-
-- `<a href="{base}/">`, `<a href="{base}/downloadQueue">`,
-  `` href={`${base}/collections/${id}`} `` — in `+layout.svelte`,
-  `+page.svelte`, `collections/[id]/+page.svelte`, `downloadQueue/+page.svelte`,
-  and `DownloadWidget.svelte`.
-- The layout's full-bleed check also uses the prefix:
-  `` $page.url.pathname.startsWith(`${base}/collections/`) `` — `$page.url.pathname`
-  includes the base in production, so without this the detail-page layout breaks.
-
-External links (provider URLs, asset hrefs, OSM tiles) and hash links
-(`href="#sec-…"`) are intentionally left unprefixed.
+**SvelteKit does NOT auto-prepend `base` to hardcoded root-relative links**, so
+every internal link imports `base` from `$app/paths`
+(`<a href="{base}/…">`, `` href={`${base}/collections/${id}`} ``) and the
+layout's full-bleed check uses `` $page.url.pathname.startsWith(`${base}/collections/`) ``.
+External links (provider URLs, asset hrefs, OSM tiles) and hash links stay
+unprefixed.
 
 ## SPA routing on Pages
 
-This is a pure client-side SPA (`fallback: 'index.html'`, no SSR/prerender), so
-deep links need a fallback the static host will serve:
+This is a pure client-side SPA (`fallback: 'index.html'`, no SSR/prerender). The
+build copies `build/index.html` → `build/404.html`; GitHub Pages serves
+`404.html` for any path that isn't a real file, so a hard refresh on e.g.
+`/stac-viewer/collections/<id>` loads the SPA shell, which then client-routes.
 
-- The deploy copies `build/index.html` → `build/404.html`. GitHub Pages serves
-  `404.html` for any path that isn't a real file, so a hard refresh on e.g.
-  `/stac-viewer/collections/<id>` loads the SPA shell, which then client-routes.
-  - Note: that deep-link response carries an **HTTP 404 status** — this is
-    normal for SPA-on-Pages (the *body* is the full app). Only the document
-    status is 404; navigation and assets work.
-- A `.nojekyll` file is written into `build/` so GitHub's Jekyll step doesn't
-  strip the `_app/` directory (Jekyll ignores paths starting with `_`).
+- The deep-link response carries an **HTTP 404 status** — normal for SPA-on-Pages
+  (the *body* is the full app). Navigation and assets work.
+- No `.nojekyll` is needed: the Pages **artifact** deployment does not run Jekyll,
+  so the `_app/` directory is served as-is.
 
-## How to deploy
+## Deploying
 
-```
-npm run deploy
-```
-
-which runs (see `package.json`):
-
-```
-rm -rf .svelte-kit/output build \
-  && BASE_PATH=/stac-viewer vite build \
-  && cp build/index.html build/404.html \
-  && touch build/.nojekyll \
-  && gh-pages -d build -t -b gh-pages
-```
-
-Step by step:
-1. **Clean** `.svelte-kit/output` and `build` — avoids a stale `base: ""`
-   leaking into the output if a prior no-base `npm run build` was run in the same
-   checkout.
-2. **Build** with `BASE_PATH=/stac-viewer`.
-3. **404 fallback** + **`.nojekyll`** (the `-t` flag tells `gh-pages` to publish
-   dotfiles like `.nojekyll`).
-4. **Publish** `build/` to the `gh-pages` branch via the `gh-pages` npm package
-   (a dev dependency). It commits and pushes the branch using your existing git
-   credentials — no extra tokens needed.
-
-Pages rebuilds automatically from the new `gh-pages` commit (typically live in
-under a minute).
+- **Automatic:** push/merge to `master` → the workflow builds and deploys
+  (typically live in ~1–2 min).
+- **Manual:** `npm run deploy` (runs `gh workflow run deploy.yml --ref master`),
+  or `gh workflow run deploy.yml`, or the **Actions ▸ Deploy to GitHub Pages ▸
+  Run workflow** button.
 
 ## One-time Pages configuration
 
-Pages must be set to serve from the `gh-pages` branch. This is already enabled
-for this repo; to (re)apply via the GitHub CLI:
+Set the Pages source to GitHub Actions (already done; `configure-pages` in the
+workflow also enforces it each run):
 
 ```
-gh api -X POST repos/iamgeodude/stac-viewer/pages \
-  -f 'source[branch]=gh-pages' -f 'source[path]=/'
+gh api -X PUT repos/iamgeodude/stac-viewer/pages -f build_type=workflow
 ```
 
-(Returns HTTP 409 "already enabled" if it's set — harmless.) Check current
-status / URL with `gh api repos/iamgeodude/stac-viewer/pages`.
+Check status / URL: `gh api repos/iamgeodude/stac-viewer/pages`.
 
 ## Verifying a deploy
 
-- `git ls-remote --heads origin gh-pages` shows the updated branch.
+- Watch the run: `gh run list --workflow=deploy.yml` → `gh run watch <id>`
+  (`gh run view <id> --log-failed` on failure).
+- `gh api repos/iamgeodude/stac-viewer/pages -q '{build_type,status,html_url}'`
+  → `build_type: "workflow"`, `status: "built"`.
 - Root loads with the right base:
   ```
   curl -s https://iamgeodude.github.io/stac-viewer/ | grep -oE 'base: "[^"]*"'
   # → base: "/stac-viewer"
   ```
-  and assets reference `/stac-viewer/_app/…`.
-- A deep link (`/stac-viewer/downloadQueue`) returns the SPA shell (correct base,
-  `_app` entry scripts, `<title>STAC Viewer</title>`) — 404 status expected.
+  assets reference `/stac-viewer/_app/…`; a deep link
+  (`/stac-viewer/downloadQueue`) returns the SPA shell (404 status expected).
 
 ## Gotchas
 
-- **`package-lock.json` is now tracked.** It was added when `gh-pages` was
-  installed; keep it committed for reproducible installs.
+- **`package-lock.json` is tracked** (needed for `npm ci` in CI).
 - **Browser-only features** (File System Access downloads, multi-tab single
-  runner) require a Chromium browser in a secure context — Pages is HTTPS, so
-  they work on the live site as they do on `localhost`.
-- The deploy targets the **`gh-pages`** branch specifically. Don't confuse it
-  with feature branches (e.g. `gh-pages-deployment`, which holds *docs*).
+  runner) require a Chromium browser in a secure context — Pages is HTTPS.
+- The first run after switching the source establishes the Actions deployment;
+  until it completes the site may briefly 404.
