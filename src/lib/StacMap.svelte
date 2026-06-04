@@ -8,11 +8,19 @@
 	 * @property {any[]} items        STAC Item features to plot.
 	 * @property {number[]|null} [bbox] Initial [w,s,e,n] to fit the view to.
 	 * @property {{feature:any}|null} [focus] A feature to pan/zoom the map to.
+	 * @property {string|null} [highlightId] Id of the item to highlight in magenta.
 	 * @property {(item:any)=>void} [onselect] Called when a feature is clicked.
 	 * @property {(bounds:number[])=>void} [onmove] Called with [w,s,e,n] on map move.
 	 */
 	/** @type {Props} */
-	let { items = [], bbox = null, focus = null, onselect, onmove } = $props();
+	let {
+		items = [],
+		bbox = null,
+		focus = null,
+		highlightId = null,
+		onselect,
+		onmove,
+	} = $props();
 
 	let el; // map container
 	let map;
@@ -98,6 +106,41 @@
 		return [minX, minY, maxX, maxY];
 	}
 
+	// Combined [w,s,e,n] across all item geometries, or null if none usable.
+	function featuresBbox(features) {
+		let minX = Infinity,
+			minY = Infinity,
+			maxX = -Infinity,
+			maxY = -Infinity;
+		for (const it of features ?? []) {
+			const b = geomBbox(it.geometry);
+			if (!b) continue;
+			if (b[0] < minX) minX = b[0];
+			if (b[1] < minY) minY = b[1];
+			if (b[2] > maxX) maxX = b[2];
+			if (b[3] > maxY) maxY = b[3];
+		}
+		if (minX === Infinity) return null;
+		return [minX, minY, maxX, maxY];
+	}
+
+	// Zoom to the loaded items' combined extent; fall back to the collection
+	// bbox when there are no items yet (e.g. before the first query returns).
+	function fitToItems() {
+		if (!map || !loaded) return;
+		const b = featuresBbox(items);
+		if (b) fitBbox(b);
+		else if (bbox) fitBbox(bbox);
+	}
+
+	// Filter the magenta highlight layers to the currently highlighted item.
+	function applyHighlight() {
+		if (!map || !loaded) return;
+		const f = ["==", ["get", "_stacId"], highlightId ?? "__none__"];
+		map.setFilter("items-highlight-fill", f);
+		map.setFilter("items-highlight-line", f);
+	}
+
 	function focusFeature(feature) {
 		if (!map || !feature) return;
 		const b = geomBbox(feature.geometry);
@@ -154,19 +197,30 @@
 				source: "items",
 				paint: { "line-color": "#000000", "line-width": 1 },
 			});
+			// Magenta highlight for the clicked/selected item, drawn on top.
+			// Initial filter matches nothing until highlightId is set.
+			const noMatch = ["==", ["get", "_stacId"], "__none__"];
 			map.addLayer({
-				id: "items-point",
-				type: "circle",
+				id: "items-highlight-fill",
+				type: "fill",
 				source: "items",
-				paint: {
-					"circle-radius": 5,
-					"circle-color": "#ffffff",
-					"circle-stroke-color": "#000000",
-					"circle-stroke-width": 1,
-				},
+				filter: noMatch,
+				paint: { "fill-color": "#ff00ff", "fill-opacity": 0.15 },
 			});
+			map.addLayer({
+				id: "items-highlight-line",
+				type: "line",
+				source: "items",
+				filter: noMatch,
+				paint: { "line-color": "#ff00ff", "line-width": 3 },
+			});
+			applyHighlight();
 
-			for (const layer of ["items-fill", "items-point"]) {
+			for (const layer of [
+				"items-fill",
+				"items-outline",
+				"items-highlight-fill",
+			]) {
 				map.on("click", layer, handleFeatureClick);
 				map.on(
 					"mouseenter",
@@ -180,7 +234,7 @@
 				);
 			}
 
-			if (bbox) fitBbox(bbox);
+			fitToItems();
 		});
 
 		map.on("moveend", () => onmove?.(currentBounds()));
@@ -193,11 +247,18 @@
 	// Re-render markers whenever items change.
 	$effect(() => {
 		render(items);
+		fitToItems();
 	});
 
 	// Pan/zoom whenever the focus target changes (a fresh object per request).
 	$effect(() => {
 		if (focus?.feature) focusFeature(focus.feature);
+	});
+
+	// Re-apply the magenta highlight whenever the highlighted item changes.
+	$effect(() => {
+		highlightId;
+		applyHighlight();
 	});
 </script>
 

@@ -627,125 +627,107 @@
 				</div>
 			</div>
 
-			<table class="items">
-				<thead>
-					<tr>
-						<th class="toggle-col"></th>
-						<th>ID</th>
-						<th>Datetime</th>
-						<th>Assets</th>
-						<th>Status</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each items as item (item.id)}
-						{@const assets = Object.entries(item.assets ?? {})}
-						{@const st = itemStatus(item)}
-						<tr
-							class:selected={selected && selected.id === item.id}
-							onclick={() => focusItem(item)}
-						>
-							<td class="toggle-col">
-								{#if assets.length > 0}
-									<button
-										class="toggle"
-										aria-label={collapsed[item.id] ? 'Expand assets' : 'Collapse assets'}
-										aria-expanded={collapsed[item.id] ? 'false' : 'true'}
-										onclick={(e) => {
-											e.stopPropagation();
-											toggleExpanded(item.id);
-										}}
-									>
-										{collapsed[item.id] ? '▸' : '▾'}
-									</button>
-								{/if}
-							</td>
-							<td><code>{item.id}</code></td>
-							<td class="muted">{item.properties?.datetime ?? '—'}</td>
-							<td class="muted">{assets.length}</td>
-							<td>
+			<div class="item-cards">
+				{#each items as item (item.id)}
+					{@const assets = Object.entries(item.assets ?? {})}
+					{@const st = itemStatus(item)}
+					<article class="item-card" class:selected={selected && selected.id === item.id}>
+						<header class="item-card-head">
+							{#if assets.length > 0}
+								<button
+									class="toggle"
+									aria-label={collapsed[item.id] ? 'Expand assets' : 'Collapse assets'}
+									aria-expanded={collapsed[item.id] ? 'false' : 'true'}
+									onclick={(e) => {
+										e.stopPropagation();
+										toggleExpanded(item.id);
+									}}
+								>
+									{collapsed[item.id] ? '▸' : '▾'}
+								</button>
+							{/if}
+							<button class="item-id" onclick={() => focusItem(item)} title="Zoom to item on map">
+								<code>{item.id}</code>
+							</button>
+							<span class="muted item-dt">{item.properties?.datetime ?? '—'}</span>
+							<span class="muted">{assets.length} asset{assets.length === 1 ? '' : 's'}</span>
+							<span class="item-status">
 								{#if st.downloaded}
 									<span class="badge badge-done">{st.downloaded} downloaded</span>
 								{/if}
 								{#if st.queued}
 									<span class="badge badge-queued">{st.queued} queued</span>
 								{/if}
-								{#if !st.downloaded && !st.queued}
-									<span class="muted">—</span>
-								{/if}
-							</td>
-						</tr>
+							</span>
+						</header>
 						{#if !collapsed[item.id]}
-							<tr class="assets-row">
-								<td></td>
-								<td colspan="4">
-									{#if assets.length === 0}
-										<p class="muted">No assets.</p>
-									{:else}
-										<table class="assets-table">
-											<thead>
+							<div class="item-assets">
+								{#if assets.length === 0}
+									<p class="muted">No assets.</p>
+								{:else}
+									<table class="assets-table">
+										<thead>
+											<tr>
+												<th class="check-col"></th>
+												<th>Key</th>
+												<th>Title</th>
+												<th>Type</th>
+												<th>Roles</th>
+												<th>Status</th>
+												<th>Href</th>
+											</tr>
+										</thead>
+										<tbody>
+											{#each assets as [key, asset] (key)}
+												{@const inQueue = !!asset.href && queuedHrefs.has(asset.href)}
+												{@const inHistory = !!asset.href && historyHrefs.has(asset.href)}
+												{@const onDisk = !!asset.href && onDiskHrefs.has(asset.href)}
 												<tr>
-													<th class="check-col"></th>
-													<th>Key</th>
-													<th>Title</th>
-													<th>Type</th>
-													<th>Roles</th>
-													<th>Status</th>
-													<th>Href</th>
+													<td class="check-col">
+														<input
+															type="checkbox"
+															checked={selectedAssets.has(assetId(item.id, key))}
+															onchange={() => toggleAsset(assetId(item.id, key))}
+															aria-label={`Select asset ${key}`}
+														/>
+													</td>
+													<td><code>{key}</code></td>
+													<td>{asset.title ?? '—'}</td>
+													<td class="muted">{asset.type ?? '—'}</td>
+													<td class="muted">{(asset.roles ?? []).join(', ') || '—'}</td>
+													<td>
+														{#if inQueue}
+															<span class="badge badge-queued">Queued</span>
+														{/if}
+														{#if inHistory || onDisk}
+															<span
+																class="badge badge-done"
+																title={[inHistory && 'in history', onDisk && 'on disk']
+																	.filter(Boolean)
+																	.join(', ')}>Downloaded</span
+															>
+														{/if}
+														{#if !inQueue && !inHistory && !onDisk}
+															<span class="muted">—</span>
+														{/if}
+													</td>
+													<td>
+														{#if asset.href}
+															<a href={asset.href} target="_blank" rel="noreferrer">open</a>
+														{:else}
+															—
+														{/if}
+													</td>
 												</tr>
-											</thead>
-											<tbody>
-												{#each assets as [key, asset] (key)}
-													{@const inQueue = !!asset.href && queuedHrefs.has(asset.href)}
-													{@const inHistory = !!asset.href && historyHrefs.has(asset.href)}
-													{@const onDisk = !!asset.href && onDiskHrefs.has(asset.href)}
-													<tr>
-														<td class="check-col">
-															<input
-																type="checkbox"
-																checked={selectedAssets.has(assetId(item.id, key))}
-																onchange={() => toggleAsset(assetId(item.id, key))}
-																aria-label={`Select asset ${key}`}
-															/>
-														</td>
-														<td><code>{key}</code></td>
-														<td>{asset.title ?? '—'}</td>
-														<td class="muted">{asset.type ?? '—'}</td>
-														<td class="muted">{(asset.roles ?? []).join(', ') || '—'}</td>
-														<td>
-															{#if inQueue}
-																<span class="badge badge-queued">Queued</span>
-															{/if}
-															{#if inHistory || onDisk}
-																<span
-																	class="badge badge-done"
-																	title={[inHistory && 'in history', onDisk && 'on disk']
-																		.filter(Boolean)
-																		.join(', ')}>Downloaded</span
-																>
-															{/if}
-															{#if !inQueue && !inHistory && !onDisk}
-																<span class="muted">—</span>
-															{/if}
-														</td>
-														<td>
-															{#if asset.href}
-																<a href={asset.href} target="_blank" rel="noreferrer">open</a>
-															{:else}
-																—
-															{/if}
-														</td>
-													</tr>
-												{/each}
-											</tbody>
-										</table>
-									{/if}
-								</td>
-							</tr>
+											{/each}
+										</tbody>
+									</table>
+								{/if}
+							</div>
 						{/if}
-					{/each}
-				</tbody>
-			</table>
+					</article>
+				{/each}
+			</div>
 			{/if}
 		</section>
 		</div>
@@ -756,6 +738,7 @@
 					{items}
 					bbox={initialBbox}
 					focus={focusTarget}
+					highlightId={selected?.id ?? null}
 					onselect={(f) => (selected = f)}
 					onmove={(b) => (mapBounds = b)}
 				/>
@@ -930,34 +913,50 @@
 		font-size: 12px;
 		color: var(--color-muted);
 	}
-	table.items {
-		width: 100%;
-		border-collapse: collapse;
+	/* Each item is a separate card with its assets table inside. */
+	.item-cards {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
 		margin-top: 12px;
 		font-size: 13px;
 	}
-	table.items th,
-	table.items td {
+	.item-card {
 		border: var(--border);
+		background: #fff;
+	}
+	.item-card.selected {
+		border-color: #ff00ff;
+	}
+	.item-card-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
 		padding: 6px 8px;
-		text-align: left;
-	}
-	table.items th {
-		font-weight: 600;
 		background: #f7f7f7;
 	}
-	table.items tbody tr {
-		cursor: pointer;
-	}
-	table.items tbody tr:hover {
-		background: #f7f7f7;
-	}
-	table.items tbody tr.selected {
+	.item-card.selected .item-card-head {
 		background: #ededed;
 	}
-	.toggle-col {
-		width: 28px;
-		text-align: center;
+	.item-status {
+		display: inline-flex;
+		flex-wrap: wrap;
+		align-items: center;
+		margin-left: auto;
+	}
+	button.item-id {
+		border: none;
+		background: none;
+		padding: 0;
+		cursor: pointer;
+		color: inherit;
+		font: inherit;
+		text-decoration: underline;
+	}
+	button.item-id:hover {
+		background: none;
+		color: #b800b8;
 	}
 	button.toggle {
 		border: none;
@@ -969,14 +968,8 @@
 	button.toggle:hover {
 		background: none;
 	}
-	/* The expanded asset sub-row should not look clickable like item rows. */
-	table.items tbody tr.assets-row,
-	table.items tbody tr.assets-row:hover {
-		cursor: default;
-		background: #fafafa;
-	}
-	table.items tbody tr.assets-row > td {
-		padding: 0;
+	.item-assets {
+		padding: 8px;
 	}
 	table.assets-table {
 		width: 100%;
