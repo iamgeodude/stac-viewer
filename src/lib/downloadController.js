@@ -43,6 +43,17 @@ let amRunner = false; // this tab currently holds the runner lock
 let usedByDir = new Map();
 let lastProgress = null; // { id, loaded, total } for request-status replies
 let lastProgressBroadcast = 0;
+let currentAbort = null; // AbortController for the in-flight transfer (Pause aborts it)
+
+// Abort the transfer currently in flight (if any) — used by Pause for an
+// instant stop instead of waiting for the active file to finish.
+function abortCurrent() {
+	try {
+		currentAbort?.abort();
+	} catch {
+		/* ignore */
+	}
+}
 
 // ---- Cross-tab control channel -------------------------------------------
 
@@ -76,8 +87,10 @@ if (control) {
 				clearProgress(m.id);
 				break;
 			case 'pause':
+				// Another tab paused; stop our in-flight transfer immediately.
 				paused = true;
 				status.set('paused');
+				abortCurrent();
 				break;
 			case 'request-status':
 				// A newly opened tab is asking; only the active runner answers.
@@ -146,18 +159,32 @@ async function runLoop() {
 			const item = pending[0];
 			item.status = 'downloading';
 			await updateQueueItem(item);
+			currentAbort = new AbortController();
+			const { signal } = currentAbort;
 			reportProgress(item.id, 0, 0, true);
 			try {
-				const bytes = await writeAsset(dirHandle, item, usedByDir, (loaded, total) =>
-					reportProgress(item.id, loaded, total)
+				const bytes = await writeAsset(
+					dirHandle,
+					item,
+					usedByDir,
+					(loaded, total) => reportProgress(item.id, loaded, total),
+					signal
 				);
 				await deleteQueueItem(item.id);
 				await addHistory({ ...item, bytes });
 			} catch (e) {
-				// Any failure (HTTP, CORS, offline, write) → dead-letter w/ message.
-				await deleteQueueItem(item.id);
-				await addDeadletter(item, e);
+				if (signal.aborted) {
+					// Paused mid-download → requeue (don't dead-letter); the partial
+					// file was discarded by writeAsset, so it restarts cleanly on resume.
+					item.status = 'pending';
+					await updateQueueItem(item);
+				} else {
+					// Any real failure (HTTP, CORS, offline, write) → dead-letter w/ message.
+					await deleteQueueItem(item.id);
+					await addDeadletter(item, e);
+				}
 			} finally {
+				currentAbort = null;
 				clearProgress(item.id);
 				send({ type: 'progress-clear', id: item.id });
 				lastProgress = null;
@@ -227,10 +254,11 @@ export async function start() {
 	acquireAndRun();
 }
 
-/** Pause the single active download (from any tab). */
+/** Pause the single active download (from any tab). Aborts the in-flight file. */
 export function pause() {
 	paused = true;
 	status.set('paused');
+	abortCurrent(); // instant stop if this tab is the runner
 	send({ type: 'pause' }); // relay to the runner tab (and others)
 }
 

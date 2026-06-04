@@ -111,12 +111,26 @@ export const getQueue = () => getAll(QUEUE);
 export const getHistory = () => getAll(HISTORY);
 export const getDeadletter = () => getAll(DEADLETTER);
 
-/** Enqueue assets for download. */
-export function enqueueAssets(assets) {
+/**
+ * Enqueue assets for download, skipping any whose href is already in the queue
+ * (pending/downloading) or duplicated within this batch — the queue itself
+ * shouldn't hold duplicate rows. (History/on-disk dedupe is handled separately
+ * by the duplicate-confirmation modal before enqueuing.)
+ * @returns {Promise<number>} how many new rows were added
+ */
+export async function enqueueAssets(assets) {
 	const now = new Date().toISOString();
-	return addItems(
+	const inQueue = new Set((await getQueue()).map((i) => i.href));
+	const seen = new Set();
+	const fresh = assets.filter((a) => {
+		if (inQueue.has(a.href) || seen.has(a.href)) return false;
+		seen.add(a.href);
+		return true;
+	});
+	if (fresh.length === 0) return 0;
+	await addItems(
 		QUEUE,
-		assets.map((a) => ({
+		fresh.map((a) => ({
 			href: a.href,
 			filename: a.filename,
 			itemId: a.itemId,
@@ -127,6 +141,7 @@ export function enqueueAssets(assets) {
 			downloadedAt: null
 		}))
 	);
+	return fresh.length;
 }
 
 export const updateQueueItem = (item) => putItem(QUEUE, item);

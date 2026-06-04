@@ -291,11 +291,13 @@
 		}
 		if (assets.length === 0) return;
 
-		// Acquire the download folder first (keeps the click gesture valid for the
-		// permission/picker prompt). Cancelling falls back to a history-only check.
+		// Use an already-authorized folder for the on-disk duplicate check, but
+		// don't force a picker prompt just to check — fall back to a history-only
+		// check when no folder is granted yet. The folder is prompted later, at
+		// download start (startDownloads), still within this click gesture.
 		let dir = null;
 		try {
-			dir = await acquireDirectory(true);
+			dir = await acquireDirectory(false);
 		} catch {
 			dir = null;
 		}
@@ -377,8 +379,15 @@
 			queuedNote = 'No assets added to the queue.';
 			return;
 		}
-		await enqueueAssets(all);
-		queuedNote = `Added ${all.length} asset${all.length === 1 ? '' : 's'} to the download queue.`;
+		const added = await enqueueAssets(all);
+		const skipped = all.length - added;
+		if (added === 0) {
+			queuedNote = `No new assets added — ${skipped === 1 ? 'it is' : 'they are'} already in the queue.`;
+			return;
+		}
+		queuedNote = `Added ${added} asset${added === 1 ? '' : 's'} to the download queue${
+			skipped ? ` (${skipped} already queued)` : ''
+		}.`;
 		startDownloads(); // prompts for a folder if one isn't already chosen
 	}
 
