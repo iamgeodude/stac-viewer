@@ -14,6 +14,7 @@
 		collectionInterval
 	} from '$lib/stac';
 	import StacMap from '$lib/StacMap.svelte';
+	import DrawBboxModal from '$lib/DrawBboxModal.svelte';
 	import { fsApiSupported, isHttps, filenameFromHref, fileExists } from '$lib/download';
 	import { enqueueAssets, getHistory } from '$lib/queue';
 	import { queueItems, historyItems } from '$lib/queueStore';
@@ -64,6 +65,16 @@
 	let limit = $state(50);
 	let useMapBounds = $state(false);
 	let mapBounds = $state(null); // [w,s,e,n] from the map
+
+	// A user-drawn search bbox (from the fullscreen draw modal). When set, it takes
+	// priority over the "Restrict to map view" viewport bounds in queryItems().
+	let drawnBbox = $state(null); // [w,s,e,n]
+	let showDrawModal = $state(false);
+
+	// The search form now lives in the map pane as a collapsible panel (expanded
+	// by default). This is a UI preference, so it's intentionally NOT reset per
+	// collection in the collection-load effect.
+	let searchCollapsed = $state(false);
 
 	let selected = $state(null);
 	// Bumped on each row click; a new object identity forces the map to refocus
@@ -389,6 +400,11 @@
 				useMapBounds = true;
 			}
 		}
+		const db = p.get('drawbbox');
+		if (db) {
+			const a = db.split(',').map(Number);
+			if (a.length === 4 && a.every(Number.isFinite)) drawnBbox = a;
+		}
 	}
 
 	// Write the current items-search filters into the URL (shallow, no reload).
@@ -401,6 +417,7 @@
 		end ? p.set('end', end) : p.delete('end');
 		p.set('limit', String(limit));
 		if (useMapBounds && mapBounds) p.set('bbox', mapBounds.join(',')); else p.delete('bbox');
+		if (drawnBbox) p.set('drawbbox', drawnBbox.join(',')); else p.delete('drawbbox');
 		replaceState(u, {});
 	}
 
@@ -428,6 +445,8 @@
 		end = '';
 		useMapBounds = false;
 		mapBounds = null;
+		drawnBbox = null;
+		showDrawModal = false;
 		dupReview = [];
 		dupIndex = 0;
 		dupAcceptAll = false;
@@ -480,11 +499,22 @@
 			limit: Number(limit) || undefined,
 			datetime: buildDatetime(start, end)
 		};
-		if (useMapBounds && mapBounds) filters.bbox = mapBounds;
+		// A drawn search box wins over the viewport "restrict to map view" bounds.
+		const bbox = drawnBbox ?? (useMapBounds && mapBounds ? mapBounds : null);
+		if (bbox) filters.bbox = bbox;
 		syncUrl();
 		pageRequests = [buildItemsUrl($apiUrl, id, filters)];
 		pageIndex = 0;
 		return loadPage();
+	}
+
+	// User-initiated search from the map-pane panel: run the query and pull the
+	// left metadata pane down to the Downloads results. (The initial auto-query
+	// below calls queryItems() directly, so it doesn't force this scroll.)
+	function runQuery() {
+		const p = queryItems();
+		scrollToSection('sec-downloads');
+		return p;
 	}
 
 	function nextPage() {
@@ -596,10 +626,10 @@
 		};
 	});
 
-	// Exact click navigation: scroll the section's heading to the top of the
-	// scroll area.
-	function gotoSection(e, secId) {
-		e.preventDefault();
+	// Scroll the left metadata pane so a section's heading sits at the top of the
+	// scroll area. Shared by TOC click-nav and the map-pane search ("scroll to
+	// Downloads on search").
+	function scrollToSection(secId) {
 		if (!metaEl) return;
 		const el = metaEl.querySelector('#' + CSS.escape(secId));
 		if (!el) return;
@@ -608,6 +638,12 @@
 		metaEl.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
 		activeSection = secId;
 		setHash(secId);
+	}
+
+	// Exact click navigation from the TOC.
+	function gotoSection(e, secId) {
+		e.preventDefault();
+		scrollToSection(secId);
 	}
 </script>
 
@@ -723,57 +759,29 @@
 			<section id="sec-downloads" class="cd-section">
 				<h2>Downloads</h2>
 
-				<div class="filters">
-			<div class="field">
-				<label for="start">Start date</label>
-				<input id="start" type="date" bind:value={start} />
-			</div>
-			<div class="field">
-				<label for="end">End date</label>
-				<input id="end" type="date" bind:value={end} />
-			</div>
-			<div class="field">
-				<label for="limit">Items per page</label>
-				<select id="limit" bind:value={limit} onchange={queryItems}>
-					{#each [10, 25, 50, 100, 250] as n (n)}
-						<option value={n}>{n}</option>
-					{/each}
-				</select>
-			</div>
-			<div class="field check">
-				<label><input type="checkbox" bind:checked={useMapBounds} /> Restrict to map view</label>
-			</div>
-			<div class="actions">
-				<button onclick={queryItems} disabled={loadingItems}>
-					{loadingItems ? 'Querying…' : 'Query items'}
-				</button>
-				<button onclick={prefillFromExtent} type="button">Use full extent</button>
-			</div>
+				{#if itemsError}
+					<div class="error small"><pre>{itemsError}</pre></div>
+				{:else}
+					<p class="count">
+						{items.length} item{items.length === 1 ? '' : 's'} on this page{#if numberMatched != null}
+							· {numberMatched} matched{/if}
+					</p>
+				{/if}
 
-			{#if itemsError}
-				<div class="error small"><pre>{itemsError}</pre></div>
-			{:else}
-				<p class="count">
-					{items.length} item{items.length === 1 ? '' : 's'} on this page{#if numberMatched != null}
-						· {numberMatched} matched{/if}
-				</p>
-			{/if}
-
-			{#if selected}
-				<div class="selected">
-					<h3>Selected item</h3>
-					<div><code>{selected.id}</code></div>
-					{#if selected.properties?.datetime}
-						<div class="muted">{selected.properties.datetime}</div>
-					{/if}
-					<ul class="assets">
-						{#each Object.entries(selected.assets ?? {}) as [key, asset] (key)}
-							<li><a href={asset.href} target="_blank" rel="noreferrer">{asset.title || key}</a></li>
-						{/each}
-					</ul>
-				</div>
-			{/if}
-				</div>
+				{#if selected}
+					<div class="selected">
+						<h3>Selected item</h3>
+						<div><code>{selected.id}</code></div>
+						{#if selected.properties?.datetime}
+							<div class="muted">{selected.properties.datetime}</div>
+						{/if}
+						<ul class="assets">
+							{#each Object.entries(selected.assets ?? {}) as [key, asset] (key)}
+								<li><a href={asset.href} target="_blank" rel="noreferrer">{asset.title || key}</a></li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
 
 				<div class="results-head">
 			<h2>Items</h2>
@@ -943,16 +951,83 @@
 		</div>
 
 		<div class="cd-map">
-			{#key id}
-				<StacMap
-					{items}
-					bbox={initialBbox}
-					focus={focusTarget}
-					highlightId={selected?.id ?? null}
-					onselect={(f) => (selected = f)}
-					onmove={(b) => (mapBounds = b)}
-				/>
-			{/key}
+			<div class="cd-search-panel">
+				<header class="sp-head">
+					<button
+						class="toggle"
+						aria-expanded={!searchCollapsed}
+						aria-label={searchCollapsed ? 'Expand search' : 'Collapse search'}
+						onclick={() => (searchCollapsed = !searchCollapsed)}
+					>
+						{searchCollapsed ? '▸' : '▾'}
+					</button>
+					<h2>Search items</h2>
+				</header>
+				{#if !searchCollapsed}
+					<div class="sp-body">
+						<div class="field">
+							<label for="start">Start date</label>
+							<input id="start" type="date" bind:value={start} />
+						</div>
+						<div class="field">
+							<label for="end">End date</label>
+							<input id="end" type="date" bind:value={end} />
+						</div>
+						<div class="field">
+							<label for="limit">Items per page</label>
+							<select id="limit" bind:value={limit} onchange={runQuery}>
+								{#each [10, 25, 50, 100, 250] as n (n)}
+									<option value={n}>{n}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="field check">
+							<label><input type="checkbox" bind:checked={useMapBounds} /> Restrict to map view</label>
+						</div>
+						{#if drawnBbox}
+							<div class="field drawn-chip">
+								<label>Drawn search area</label>
+								<div class="drawn-row">
+									<code
+										>W {drawnBbox[0].toFixed(3)}, S {drawnBbox[1].toFixed(3)}, E {drawnBbox[2].toFixed(
+											3
+										)}, N {drawnBbox[3].toFixed(3)}</code
+									>
+									<button type="button" onclick={() => (drawnBbox = null)}>Clear</button>
+								</div>
+							</div>
+						{/if}
+						<div class="actions">
+							<button onclick={runQuery} disabled={loadingItems}>
+								{loadingItems ? 'Querying…' : 'Query items'}
+							</button>
+							<button onclick={prefillFromExtent} type="button">Use full extent</button>
+							<button
+								type="button"
+								onclick={() => (showDrawModal = true)}
+								disabled={!spatialBbox}
+								title={spatialBbox
+									? 'Draw a search bounding box on a fullscreen map'
+									: 'This collection has no spatial extent to draw within'}
+							>
+								{drawnBbox ? 'Edit search area' : 'Draw search area'}
+							</button>
+						</div>
+					</div>
+				{/if}
+			</div>
+			<div class="cd-map-canvas">
+				{#key id}
+					<StacMap
+						{items}
+						bbox={initialBbox}
+						focus={focusTarget}
+						highlightId={selected?.id ?? null}
+						onselect={(f) => (selected = f)}
+						onmove={(b) => (mapBounds = b)}
+					/>
+				{/key}
+			</div>
 		</div>
 	</div>
 {/if}
@@ -1004,6 +1079,20 @@
 	</div>
 {/if}
 
+{#if showDrawModal}
+	<DrawBboxModal
+		extent={spatialBbox}
+		initial={drawnBbox}
+		onconfirm={(b) => {
+			drawnBbox = b;
+			useMapBounds = false;
+			showDrawModal = false;
+			runQuery();
+		}}
+		oncancel={() => (showDrawModal = false)}
+	/>
+{/if}
+
 <style>
 	.back {
 		margin: var(--space) 0;
@@ -1044,13 +1133,63 @@
 		padding: 0 var(--space) var(--space);
 		scroll-behavior: smooth;
 	}
+	/* Right pane: a flex column = the collapsible search panel docked on top and
+	   the map filling the rest. */
 	.cd-map {
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
+	.cd-map-canvas {
+		flex: 1 1 0;
 		min-height: 0;
 	}
 	.cd-map :global(.map) {
 		height: 100%;
 		min-height: 0;
 		border: none;
+	}
+	/* Search-items panel: pinned header + collapsible body above the map. */
+	.cd-search-panel {
+		flex: 0 0 auto;
+		background: var(--color-bg);
+		border-bottom: var(--border);
+	}
+	.sp-head {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px var(--space);
+	}
+	.sp-head h2 {
+		font-size: 15px;
+		margin: 0;
+	}
+	.sp-body {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-end;
+		gap: var(--space);
+		padding: 0 var(--space) var(--space);
+	}
+	.sp-body .field {
+		flex: 1 1 150px;
+		margin-bottom: 0;
+	}
+	.sp-body .actions {
+		margin-bottom: 0;
+	}
+	.drawn-chip {
+		flex: 1 1 100%;
+	}
+	.drawn-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.drawn-row code {
+		font-size: 12px;
 	}
 	/* Table-of-contents nav: pinned header (a non-scrolling flex child of .cd-meta),
 	   so it stays flush with the global topbar while .cd-scroll scrolls beneath it. */
@@ -1116,11 +1255,6 @@
 	.summary-list dd {
 		margin: 0 0 6px 0;
 		word-break: break-word;
-	}
-	.filters {
-		border: var(--border);
-		padding: var(--space);
-		margin-bottom: 12px;
 	}
 	.field {
 		margin-bottom: 12px;
