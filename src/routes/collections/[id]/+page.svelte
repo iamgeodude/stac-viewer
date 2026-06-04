@@ -551,20 +551,15 @@
 		replaceState(u, {});
 	}
 
-	// Height of the sticky TOC (may wrap to multiple rows), used as the offset
-	// line for both scroll-spy and click navigation.
-	function tocHeight() {
-		return metaEl?.querySelector('.cd-toc')?.offsetHeight ?? 0;
-	}
-
 	// Pick the active section deterministically: the last section whose top has
-	// scrolled up to (or past) the line just under the sticky TOC. A bottom clamp
-	// lets a tiny final section activate when scrolled all the way down.
+	// scrolled up to (or past) the top of the scroll area (the TOC is a separate
+	// pinned header outside it). A bottom clamp lets a tiny final section activate
+	// when scrolled all the way down.
 	function computeActive() {
 		if (!metaEl) return;
 		const els = [...metaEl.querySelectorAll('section[id^="sec-"]')];
 		if (!els.length) return;
-		const base = metaEl.getBoundingClientRect().top + tocHeight() + 1;
+		const base = metaEl.getBoundingClientRect().top + 1;
 		let current = els[0].id;
 		for (const el of els) {
 			if (el.getBoundingClientRect().top <= base) current = el.id;
@@ -601,18 +596,15 @@
 		};
 	});
 
-	// Exact click navigation: scroll the section's heading to just under the TOC,
-	// independent of native scroll-margin (which mismatches when the TOC wraps).
+	// Exact click navigation: scroll the section's heading to the top of the
+	// scroll area.
 	function gotoSection(e, secId) {
 		e.preventDefault();
 		if (!metaEl) return;
 		const el = metaEl.querySelector('#' + CSS.escape(secId));
 		if (!el) return;
 		const top =
-			el.getBoundingClientRect().top -
-			metaEl.getBoundingClientRect().top +
-			metaEl.scrollTop -
-			tocHeight();
+			el.getBoundingClientRect().top - metaEl.getBoundingClientRect().top + metaEl.scrollTop;
 		metaEl.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
 		activeSection = secId;
 		setHash(secId);
@@ -630,10 +622,7 @@
 	</div>
 {:else if collection}
 	<div class="cd-split">
-		<div class="cd-meta" bind:this={metaEl}>
-			<p class="back"><a href="/">← All collections</a></p>
-			<h1>{collection.title || collection.id}</h1>
-
+		<div class="cd-meta">
 			<nav class="cd-toc">
 				{#each sections as s (s.id)}
 					<a
@@ -643,6 +632,10 @@
 					>
 				{/each}
 			</nav>
+
+			<div class="cd-scroll" bind:this={metaEl}>
+			<p class="back"><a href="/">← All collections</a></p>
+			<h1>{collection.title || collection.id}</h1>
 
 			<section id="sec-overview" class="cd-section">
 				<h2>Overview</h2>
@@ -947,6 +940,7 @@
 			{/if}
 		</section>
 		</div>
+		</div>
 
 		<div class="cd-map">
 			{#key id}
@@ -1034,11 +1028,19 @@
 		grid-template-rows: 1fr;
 		height: 100%; /* fills <main>, i.e. the viewport below the header */
 	}
+	/* Left pane: a non-scrolling flex column = pinned TOC header + scrolling body.
+	   This pins the TOC reliably (no position:sticky) flush with the global topbar. */
 	.cd-meta {
-		overflow-y: auto;
-		min-height: 0; /* allow the grid item to shrink so it can scroll */
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		overflow: hidden;
 		border-right: var(--border);
-		/* No top padding: keeps the sticky TOC flush with the global topbar. */
+	}
+	.cd-scroll {
+		flex: 1 1 0;
+		min-height: 0;
+		overflow-y: auto;
 		padding: 0 var(--space) var(--space);
 		scroll-behavior: smooth;
 	}
@@ -1050,16 +1052,14 @@
 		min-height: 0;
 		border: none;
 	}
-	/* Table-of-contents nav: sticky at the top of the scrollable metadata pane. */
+	/* Table-of-contents nav: pinned header (a non-scrolling flex child of .cd-meta),
+	   so it stays flush with the global topbar while .cd-scroll scrolls beneath it. */
 	.cd-toc {
-		position: sticky;
-		top: 0;
-		z-index: 5;
+		flex: 0 0 auto;
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px 10px;
-		padding: 8px 0;
-		margin-bottom: var(--space);
+		padding: 8px var(--space);
 		background: var(--color-bg);
 		border-bottom: var(--border);
 	}
