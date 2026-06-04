@@ -21,7 +21,7 @@ A SvelteKit SPA (Svelte 5 runes) front end for a STAC API. Homepage lists collec
 4. Downloads, evolved over several steps into the current design:
    - File System Access API (`showDirectoryPicker`) → nested folders `<catalog>/<collection>/<itemId>/<filename>`.
    - **IndexedDB queue** (`queue`/`history`/`deadletter`/`meta`, DB v3) with cross-tab live sync (BroadcastChannel) and in-memory per-file byte `progress`.
-   - **Single-runner controller** (`downloadController.js`) with pause/resume, **Web Locks** so only one tab downloads, status/progress broadcast across tabs, resume-after-refresh (persisted dir handle + `initOnLoad`).
+   - **Single-runner controller** (`downloadController.js`) with pause/resume, **Web Locks** so only one tab downloads, status/progress broadcast across tabs, resume-after-refresh that is **user-initiated** (persisted dir handle + `initOnLoad`; no auto-resume — see timeline 21).
    - **Duplicate check** before queuing.
 5. Map swapped Leaflet → MapLibre; later changed the MapLibre import from a dynamic `await import` to a normal top-level `import` (safe because `ssr=false`).
 6. Default STAC API switched from Microsoft Planetary Computer → **"Kentucky From Above"** (`https://spved5ihrl.execute-api.us-west-2.amazonaws.com`, stac-fastapi, CORS `*`, 9 collections: dem/laz/orthos phase 1–3).
@@ -52,6 +52,7 @@ A SvelteKit SPA (Svelte 5 runes) front end for a STAC API. Homepage lists collec
     - **Instant pause:** `writeAsset` now takes an `AbortSignal` passed to `fetch`. The controller creates an `AbortController` per item; `pause()` (and the cross-tab `'pause'` relay) call `abortCurrent()` to abort the in-flight transfer immediately instead of waiting for the file to finish. An aborted item is **requeued as `pending`** (not dead-lettered) — `signal.aborted` distinguishes a pause from a real failure — and `writeAsset` discards the partial file, so it restarts cleanly on resume.
     - **Queue dedupe on enqueue:** `enqueueAssets` is now async, skipping assets whose `href` is already in the queue (pending/downloading) or duplicated within the batch, and returns the count actually added. `finalizeQueue` (detail page) uses that count for the confirmation note ("Added N… (M already queued)"). The duplicate *modal* still guards history/on-disk dupes; this stops the queue holding duplicate rows from repeated clicks.
     - **Folder-prompt UX:** the duplicate check now calls `acquireDirectory(false)` — it no longer forces a folder picker just to check on-disk; on-disk dedupe runs only when a folder is already authorized, otherwise it's history-only. The actual folder prompt happens at download start (`startDownloads`), still within the click gesture.
+21. **No auto-resume on refresh** (`downloadController.js` `initOnLoad`) — a (hard) refresh no longer auto-resumes the download queue. `initOnLoad` still recovers stuck `downloading` → `pending` items and preloads the persisted directory handle (so a user-initiated resume won't re-prompt when permission persists), but it no longer calls `acquireAndRun()`. The queue stays idle until the user clicks **Start/Resume** (widget or `/downloadQueue`), even if folder permission is still `granted`. Cross-tab status sync is unchanged (a tab opened while another is actively downloading still reflects `running`).
 
 ## Key decisions / conventions
 
