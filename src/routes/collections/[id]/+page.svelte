@@ -16,6 +16,8 @@
 	} from '$lib/stac';
 	import StacMap from '$lib/StacMap.svelte';
 	import DrawBboxModal from '$lib/DrawBboxModal.svelte';
+	import MetaValue from '$lib/MetaValue.svelte';
+	import { buildSections } from '$lib/stacMeta';
 	import { fsApiSupported, isHttps, filenameFromHref, fileExists } from '$lib/download';
 	import { enqueueAssets, getHistory } from '$lib/queue';
 	import { queueItems, historyItems } from '$lib/queueStore';
@@ -548,27 +550,28 @@
 		end = e ? e.slice(0, 10) : '';
 	}
 
-	let temporal = $derived(collection ? collectionInterval(collection) : [null, null]);
+	// Collection spatial extent — drives the draw-bbox modal's allowed area.
 	let spatialBbox = $derived(collection ? collectionBbox(collection) : null);
 
 	// --- Metadata sections: TOC + hash scroll-spy ----------------------------
-	// Which sections to show in the table of contents (only those with data).
-	// Overview / Extent / Downloads are always present.
+	// Metadata sections are generated dynamically from whatever fields the
+	// collection has (scalars grouped into "Overview"; each object/array field
+	// gets its own section). The functional Downloads section is always appended.
+	let metaSections = $derived(collection ? buildSections(collection) : []);
 	let sections = $derived(
-		!collection
-			? []
-			: [
-					{ id: 'sec-overview', label: 'Overview' },
-					collection.description && { id: 'sec-description', label: 'Description' },
-					{ id: 'sec-extent', label: 'Extent' },
-					collection.providers?.length && { id: 'sec-providers', label: 'Providers' },
-					collection.keywords?.length && { id: 'sec-keywords', label: 'Keywords' },
-					collection.summaries && Object.keys(collection.summaries).length
-						? { id: 'sec-summaries', label: 'Summaries' }
-						: null,
-					{ id: 'sec-downloads', label: 'Downloads' }
-				].filter(Boolean)
+		collection ? [...metaSections, { id: 'sec-downloads', label: 'Downloads' }] : []
 	);
+
+	// Defer mounting the (potentially large/deep) metadata tree by one frame so
+	// the page shell + indicator paint first, keeping navigation snappy.
+	let metaReady = $state(false);
+	$effect(() => {
+		collection; // re-run on collection load / navigation
+		metaReady = false;
+		if (!browser || !collection) return;
+		const raf = requestAnimationFrame(() => (metaReady = true));
+		return () => cancelAnimationFrame(raf);
+	});
 
 	let metaEl = $state(null); // the scrollable left panel; scroll-spy root
 	let activeSection = $state('');
@@ -674,87 +677,15 @@
 			<p class="back"><a href="{base}/">← All collections</a></p>
 			<h1>{collection.title || collection.id}</h1>
 
-			<section id="sec-overview" class="cd-section">
-				<h2>Overview</h2>
-				<div class="meta">
-					<div><label>ID</label><code>{collection.id}</code></div>
-					{#if collection.license}
-						<div><label>License</label>{collection.license}</div>
-					{/if}
-					{#if collection.stac_version}
-						<div><label>STAC version</label>{collection.stac_version}</div>
-					{/if}
-				</div>
-			</section>
-
-			{#if collection.description}
-				<section id="sec-description" class="cd-section">
-					<h2>Description</h2>
-					<p class="desc">{collection.description}</p>
-				</section>
-			{/if}
-
-			<section id="sec-extent" class="cd-section">
-				<h2>Extent</h2>
-				<h3>Spatial</h3>
-				{#if spatialBbox}
-					<p class="muted">
-						W {spatialBbox[0]}, S {spatialBbox[1]}, E {spatialBbox[2]}, N {spatialBbox[3]}
-					</p>
-				{:else}
-					<p class="muted">—</p>
-				{/if}
-				<h3>Temporal</h3>
-				<p class="muted">{temporal[0] ?? '…'} → {temporal[1] ?? 'now'}</p>
-			</section>
-
-			{#if collection.providers?.length}
-				<section id="sec-providers" class="cd-section">
-					<h2>Providers</h2>
-					<ul class="prov-list">
-						{#each collection.providers as prov (prov.name)}
-							<li>
-								{#if prov.url}
-									<a href={prov.url} target="_blank" rel="noreferrer">{prov.name}</a>
-								{:else}
-									{prov.name}
-								{/if}
-								{#if prov.roles?.length}
-									<span class="muted"> — {prov.roles.join(', ')}</span>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				</section>
-			{/if}
-
-			{#if collection.keywords?.length}
-				<section id="sec-keywords" class="cd-section">
-					<h2>Keywords</h2>
-					<div class="kw-list">
-						{#each collection.keywords as kw (kw)}
-							<span class="kw">{kw}</span>
-						{/each}
-					</div>
-				</section>
-			{/if}
-
-			{#if collection.summaries && Object.keys(collection.summaries).length}
-				<section id="sec-summaries" class="cd-section">
-					<h2>Summaries</h2>
-					<dl class="summary-list">
-						{#each Object.entries(collection.summaries) as [k, v] (k)}
-							<dt>{k}</dt>
-							<dd class="muted">
-								{Array.isArray(v)
-									? v.join(', ')
-									: typeof v === 'object'
-										? JSON.stringify(v)
-										: v}
-							</dd>
-						{/each}
-					</dl>
-				</section>
+			{#if !metaReady}
+				<p class="rendering"><span class="spinner" aria-hidden="true"></span> Rendering metadata…</p>
+			{:else}
+				{#each metaSections as s (s.id)}
+					<section id={s.id} class="cd-section">
+						<h2>{s.label}</h2>
+						<MetaValue value={s.value} fieldKey={s.key} />
+					</section>
+				{/each}
 			{/if}
 
 			<section id="sec-downloads" class="cd-section">
@@ -1098,17 +1029,26 @@
 	.back {
 		margin: var(--space) 0;
 	}
-	.meta {
+	/* Metadata render-deferral indicator. */
+	.rendering {
 		display: flex;
-		gap: calc(var(--space) * 2);
-		flex-wrap: wrap;
-		border: var(--border);
-		padding: var(--space);
-		margin-bottom: var(--space);
-	}
-	.desc {
-		max-width: 80ch;
+		align-items: center;
+		gap: 8px;
 		color: var(--color-muted);
+		font-size: 13px;
+	}
+	.spinner {
+		width: 14px;
+		height: 14px;
+		border: 2px solid var(--color-border);
+		border-top-color: var(--color-fg);
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 	/* Two-pane split: metadata (60%, scrollable) + map (40%, fixed), 100vh.
 	   On tablet/mobile it stacks to map-on-top (30vh) / metadata (70vh). */
@@ -1225,37 +1165,6 @@
 	.cd-section > h2 {
 		font-size: 15px;
 		margin: 0 0 8px 0;
-	}
-	.cd-section > h3 {
-		font-size: 13px;
-		margin: 10px 0 4px 0;
-	}
-	.prov-list {
-		margin: 0;
-		padding-left: 18px;
-		font-size: 13px;
-	}
-	.kw-list {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px;
-	}
-	.kw {
-		border: var(--border);
-		padding: 0 6px;
-		font-size: 11px;
-		line-height: 1.7;
-	}
-	.summary-list {
-		margin: 0;
-		font-size: 12px;
-	}
-	.summary-list dt {
-		font-weight: 600;
-	}
-	.summary-list dd {
-		margin: 0 0 6px 0;
-		word-break: break-word;
 	}
 	.field {
 		margin-bottom: 12px;

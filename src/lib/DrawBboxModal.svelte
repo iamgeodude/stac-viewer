@@ -18,6 +18,7 @@
 
 	let el; // map container
 	let map;
+	let ro; // ResizeObserver — keeps the canvas sized to the modal container
 	let drawn = $state(initial && initial.length === 4 ? [...initial] : null); // [w,s,e,n]
 	let dragging = false;
 	let startLngLat = null;
@@ -186,11 +187,19 @@
 			map.resize();
 		});
 
+		// The modal is a freshly-mounted, fixed-position element, so its container
+		// can be 0×0 when the map is created and when the (fast, inline-style)
+		// 'load' resize runs — leaving a blank WebGL canvas. A ResizeObserver
+		// resizes the map once the layout settles (and on any later size change).
+		ro = new ResizeObserver(() => map?.resize());
+		ro.observe(el);
+
 		window.addEventListener('mouseup', onWindowUp);
 		window.addEventListener('keydown', onKeydown);
 	});
 
 	onDestroy(() => {
+		ro?.disconnect();
 		window.removeEventListener('mouseup', onWindowUp);
 		window.removeEventListener('keydown', onKeydown);
 		if (map) map.remove();
