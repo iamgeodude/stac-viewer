@@ -40,15 +40,36 @@ async function ensureDir(rootHandle, segments) {
 }
 
 /**
+ * The top "<catalog>" folder for an asset: the originating STAC API route
+ * (host + path, scheme stripped) as a single sanitized segment, e.g.
+ *   https://planetarycomputer.microsoft.com/api/stac/v1
+ *     → planetarycomputer.microsoft.com_api_stac_v1
+ * Falls back to the stored catalog name (older records have no `apiRoot`).
+ */
+export function catalogSegment(item) {
+	if (item.apiRoot) {
+		try {
+			const u = new URL(item.apiRoot);
+			return safeSegment((u.host + u.pathname).replace(/\/+$/, ''));
+		} catch {
+			/* fall through to catalogName */
+		}
+	}
+	return safeSegment(item.catalogName || 'catalog');
+}
+
+/**
  * The destination an asset is written to within the chosen directory:
- *   <catalog name>/<collection name>/<item id>/<filename>
+ *   <api route>/<collection id>/<item id>/<filename>
  * Single source of truth shared by writeAsset (writer) and fileExists (check).
  * @returns {{ segments: string[], name: string }} sanitized path parts
  */
 export function assetTargetPath(item) {
-	const segments = [item.catalogName || 'catalog', item.collectionId, item.itemId].map(
-		safeSegment
-	);
+	const segments = [
+		catalogSegment(item),
+		safeSegment(item.collectionId),
+		safeSegment(item.itemId)
+	];
 	const name = safeSegment(item.filename || filenameFromHref(item.href));
 	return { segments, name };
 }

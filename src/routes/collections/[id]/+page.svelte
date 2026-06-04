@@ -186,7 +186,8 @@
 			filename: filenameFromHref(asset.href),
 			itemId: item.id,
 			collectionId: collection.id,
-			catalogName: catalogName || 'catalog'
+			catalogName: catalogName || 'catalog',
+			apiRoot: $apiUrl
 		};
 	}
 
@@ -286,7 +287,8 @@
 				filename: filenameFromHref(asset.href),
 				itemId,
 				collectionId: collection.id,
-				catalogName: catalogName || 'catalog'
+				catalogName: catalogName || 'catalog',
+				apiRoot: $apiUrl
 			});
 		}
 		if (assets.length === 0) return;

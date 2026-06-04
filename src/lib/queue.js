@@ -136,6 +136,7 @@ export async function enqueueAssets(assets) {
 			itemId: a.itemId,
 			collectionId: a.collectionId,
 			catalogName: a.catalogName,
+			apiRoot: a.apiRoot ?? null,
 			status: 'pending',
 			addedAt: a.addedAt ?? now,
 			downloadedAt: null
@@ -156,6 +157,7 @@ export function addHistory(asset) {
 			itemId: asset.itemId,
 			collectionId: asset.collectionId,
 			catalogName: asset.catalogName,
+			apiRoot: asset.apiRoot ?? null,
 			addedAt: asset.addedAt ?? null,
 			downloadedAt: new Date().toISOString(),
 			bytes: asset.bytes ?? null
@@ -172,6 +174,7 @@ export function addDeadletter(asset, error) {
 			itemId: asset.itemId,
 			collectionId: asset.collectionId,
 			catalogName: asset.catalogName,
+			apiRoot: asset.apiRoot ?? null,
 			addedAt: asset.addedAt ?? null,
 			error: String(error?.message ?? error),
 			failedAt: new Date().toISOString()
