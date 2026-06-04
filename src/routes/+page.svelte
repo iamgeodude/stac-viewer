@@ -1,4 +1,5 @@
 <script>
+	import { base } from '$app/paths';
 	import { apiUrl } from '$lib/config';
 	import { fetchCollections } from '$lib/stac';
 
@@ -61,7 +62,7 @@
 	<p class="count">{filtered.length} of {collections.length} collections</p>
 	<div class="grid">
 		{#each filtered as c (c.id)}
-			<a class="card" href={`/collections/${encodeURIComponent(c.id)}`}>
+			<a class="card" href={`${base}/collections/${encodeURIComponent(c.id)}`}>
 				<h2>{c.title || c.id}</h2>
 				<div class="id"><code>{c.id}</code></div>
 				{#if c.description}

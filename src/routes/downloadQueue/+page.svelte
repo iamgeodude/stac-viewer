@@ -1,4 +1,5 @@
 <script>
+	import { base } from '$app/paths';
 	import { clearStore, QUEUE, HISTORY, DEADLETTER } from '$lib/queue';
 	import { queueItems, historyItems, deadItems, progress } from '$lib/queueStore';
 	import { fsApiSupported } from '$lib/download';
@@ -52,7 +53,7 @@
 	}
 </script>
 
-<p class="back"><a href="/">← All collections</a></p>
+<p class="back"><a href="{base}/">← All collections</a></p>
 <h1>Downloads</h1>
 
 {#if !fsSupported}

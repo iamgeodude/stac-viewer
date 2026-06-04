@@ -1,6 +1,7 @@
 <script>
 	import { page } from '$app/stores';
 	import { replaceState } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { browser } from '$app/environment';
 	import { get } from 'svelte/store';
 	import { apiUrl } from '$lib/config';
@@ -648,10 +649,10 @@
 </script>
 
 {#if loadingCollection}
-	<p class="back"><a href="/">← All collections</a></p>
+	<p class="back"><a href="{base}/">← All collections</a></p>
 	<p>Loading collection…</p>
 {:else if collectionError}
-	<p class="back"><a href="/">← All collections</a></p>
+	<p class="back"><a href="{base}/">← All collections</a></p>
 	<div class="error">
 		<strong>Failed to load collection.</strong>
 		<pre>{collectionError}</pre>
@@ -670,7 +671,7 @@
 			</nav>
 
 			<div class="cd-scroll" bind:this={metaEl}>
-			<p class="back"><a href="/">← All collections</a></p>
+			<p class="back"><a href="{base}/">← All collections</a></p>
 			<h1>{collection.title || collection.id}</h1>
 
 			<section id="sec-overview" class="cd-section">
@@ -837,7 +838,7 @@
 					{#if queuedNote}
 						<span class="af-note">{queuedNote}</span>
 					{/if}
-					<span class="af-note"><a href="/downloadQueue">View download queue →</a></span>
+					<span class="af-note"><a href="{base}/downloadQueue">View download queue →</a></span>
 					{#if !fsSupported}
 						<span class="af-note">Folder download requires a Chromium-based browser.</span>
 					{/if}

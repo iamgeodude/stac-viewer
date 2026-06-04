@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { base } from '$app/paths';
 	import { apiUrl, DEFAULT_API_URL } from '$lib/config';
 	import DownloadWidget from '$lib/DownloadWidget.svelte';
 	import { initOnLoad } from '$lib/downloadController';
@@ -10,7 +11,7 @@
 
 	// The collection detail page owns the full viewport (two-pane 100vh layout),
 	// so main goes edge-to-edge (no padding) and clips its own overflow there.
-	let fullBleed = $derived($page.url.pathname.startsWith('/collections/'));
+	let fullBleed = $derived($page.url.pathname.startsWith(`${base}/collections/`));
 
 	// Recover any interrupted download when the app loads.
 	onMount(initOnLoad);
@@ -30,8 +31,8 @@
 </script>
 
 <header class="topbar">
-	<a class="brand" href="/">STAC Viewer</a>
-	<a class="nav" href="/downloadQueue">Download queue</a>
+	<a class="brand" href="{base}/">STAC Viewer</a>
+	<a class="nav" href="{base}/downloadQueue">Download queue</a>
 	<div class="api">
 		<label for="api-url">STAC API URL</label>
 		<div class="api-row">

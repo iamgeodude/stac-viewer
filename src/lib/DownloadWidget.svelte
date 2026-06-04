@@ -1,5 +1,6 @@
 <script>
 	// Floating download controller shown on every page (rendered in the layout).
+	import { base } from '$app/paths';
 	import { queueItems, progress } from '$lib/queueStore';
 	import { status, start, pause } from '$lib/downloadController';
 	import { fsApiSupported } from '$lib/download';
@@ -42,7 +43,7 @@
 				</div>
 			</div>
 		{/if}
-		<a class="link" href="/downloadQueue">Manage downloads →</a>
+		<a class="link" href="{base}/downloadQueue">Manage downloads →</a>
 	</div>
 {/if}
 
