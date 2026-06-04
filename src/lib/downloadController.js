@@ -12,8 +12,10 @@
  *     state. Pause requests are relayed the same way, so any tab can pause the
  *     single active download.
  *
- * Also: the chosen directory handle is persisted (meta store) so a download can
- * resume after a refresh, and `initOnLoad()` recovers items left mid-download.
+ * Also: the chosen directory handle is persisted (meta store) so a refreshed
+ * session can resume without re-picking the folder, and `initOnLoad()` recovers
+ * items left mid-download. Resume after a refresh is user-initiated (the Start
+ * button), never automatic.
  */
 import { writable, get } from 'svelte/store';
 import { browser } from '$app/environment';
@@ -270,30 +272,28 @@ export async function retry(records) {
 }
 
 /**
- * Run once on app load: sync status from any active tab, recover from a refresh
- * mid-download (reset stuck items), and auto-resume if permission is still
- * granted and no other tab is running.
+ * Run once on app load: sync status from any active tab and recover from a
+ * refresh mid-download (reset stuck items). Does NOT auto-resume — after a
+ * (hard) refresh the queue stays idle until the user clicks Start/Resume, even
+ * if folder permission persists. The persisted handle is preloaded so that
+ * user-initiated resume won't re-prompt for the folder when permission is still
+ * granted.
  */
 export async function initOnLoad() {
 	if (!browser || !fsApiSupported()) return;
 
-	// Ask any active tab to report its status/progress.
+	// Reflect any tab that's already actively downloading.
 	send({ type: 'request-status' });
 
+	// Recover items a previous session left mid-download (downloading → pending).
 	const queue = await getQueue();
 	for (const it of queue.filter((i) => i.status === 'downloading')) {
 		it.status = 'pending';
 		await updateQueueItem(it);
 	}
 
+	// Preload the persisted directory handle (no prompt, no auto-run). Resume is
+	// user-initiated via the widget/queue-page Start button.
 	const stored = await getMeta(DIR_KEY);
-	if (!stored) return;
-	dirHandle = stored;
-
-	// Auto-resume only if permission is still granted (a fresh reload usually
-	// drops to 'prompt', in which case the widget shows a Start/Resume button).
-	// acquireAndRun's lock guarantees we won't double-run if another tab is busy.
-	if (await verifyPermission(dirHandle, false)) {
-		if ((await getQueue()).some((i) => i.status === 'pending')) acquireAndRun();
-	}
+	if (stored) dirHandle = stored;
 }
