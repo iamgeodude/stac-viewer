@@ -1,11 +1,25 @@
 <script>
 	import { base } from '$app/paths';
+	import { apiUrl } from '$lib/config';
 	import { clearStore, QUEUE, HISTORY, DEADLETTER } from '$lib/queue';
 	import { queueItems, historyItems, deadItems, progress } from '$lib/queueStore';
 	import { fsApiSupported } from '$lib/download';
 	import { status, start, pause, retry } from '$lib/downloadController';
 
 	const fsSupported = fsApiSupported();
+
+	// STAC-browser links for queue/history/dead-letter rows. The collection opens
+	// in this app's collection page; the item opens the STAC API item JSON (no
+	// per-item page exists). The item link uses the record's persisted `apiRoot`
+	// (the API it was queued from), falling back to the currently-configured
+	// apiUrl for older records that predate apiRoot persistence.
+	const rootFor = (rec) => (rec.apiRoot || $apiUrl || '').replace(/\/+$/, '');
+	const collPageHref = (rec) =>
+		rec.collectionId ? `${base}/collections/${encodeURIComponent(rec.collectionId)}` : null;
+	const itemApiHref = (rec) =>
+		rec.collectionId && rec.itemId
+			? `${rootFor(rec)}/collections/${encodeURIComponent(rec.collectionId)}/items/${encodeURIComponent(rec.itemId)}`
+			: null;
 
 	let selectedDead = $state(new Set());
 
@@ -55,10 +69,44 @@
 
 <p class="back"><a href="{base}/">← All collections</a></p>
 <h1>Downloads</h1>
+<p class="muted small hint">
+	Filenames open the asset, item IDs open the STAC API, collection IDs open the collection page.
+</p>
 
 {#if !fsSupported}
 	<p class="note">Downloading requires a Chromium-based browser (File System Access API).</p>
 {/if}
+
+<!-- Shared row cells, so the three tables stay visually + behaviourally consistent. -->
+{#snippet fileCell(rec)}
+	<td class="wrap">
+		{#if rec.href}
+			<a href={rec.href} target="_blank" rel="noreferrer" title={rec.href}><code>{rec.filename}</code></a>
+		{:else}
+			<code>{rec.filename}</code>
+		{/if}
+	</td>
+{/snippet}
+{#snippet itemCell(rec)}
+	<td class="wrap">
+		{#if itemApiHref(rec)}
+			<a href={itemApiHref(rec)} target="_blank" rel="noreferrer" title="View item in the STAC API"
+				>{rec.itemId}</a
+			>
+		{:else}
+			<span class="muted">{rec.itemId ?? '—'}</span>
+		{/if}
+	</td>
+{/snippet}
+{#snippet collCell(rec)}
+	<td class="wrap">
+		{#if collPageHref(rec)}
+			<a href={collPageHref(rec)} title="View collection in the browser">{rec.collectionId}</a>
+		{:else}
+			<span class="muted">—</span>
+		{/if}
+	</td>
+{/snippet}
 
 <!-- Active queue -->
 <section>
@@ -86,6 +134,7 @@
 					<th>Status</th>
 					<th>Filename</th>
 					<th>Item</th>
+					<th>Collection</th>
 					<th>Progress</th>
 					<th>Added</th>
 				</tr>
@@ -95,8 +144,9 @@
 					{@const p = $progress[it.id]}
 					<tr>
 						<td><span class="status status-{it.status}">{it.status}</span></td>
-						<td><code>{it.filename}</code></td>
-						<td class="muted">{it.itemId}</td>
+						{@render fileCell(it)}
+						{@render itemCell(it)}
+						{@render collCell(it)}
 						<td class="progress-cell">
 							{#if it.status === 'downloading' && p}
 								{#if p.total > 0}
@@ -143,9 +193,9 @@
 			<tbody>
 				{#each $historyItems as h (h.id)}
 					<tr>
-						<td><code>{h.filename}</code></td>
-						<td class="muted">{h.itemId}</td>
-						<td class="muted">{h.collectionId}</td>
+						{@render fileCell(h)}
+						{@render itemCell(h)}
+						{@render collCell(h)}
 						<td class="muted">{h.bytes != null ? fmtBytes(h.bytes) : '—'}</td>
 						<td class="muted">{fmt(h.downloadedAt)}</td>
 					</tr>
@@ -176,6 +226,7 @@
 					<th class="check-col"></th>
 					<th>Filename</th>
 					<th>Item</th>
+					<th>Collection</th>
 					<th>Error</th>
 					<th>Failed</th>
 				</tr>
@@ -191,8 +242,9 @@
 								aria-label={`Select ${d.filename} for retry`}
 							/>
 						</td>
-						<td><code>{d.filename}</code></td>
-						<td class="muted">{d.itemId}</td>
+						{@render fileCell(d)}
+						{@render itemCell(d)}
+						{@render collCell(d)}
 						<td class="err">{d.error}</td>
 						<td class="muted">{fmt(d.failedAt)}</td>
 					</tr>
@@ -235,6 +287,13 @@
 	}
 	.small {
 		font-size: 11px;
+	}
+	.hint {
+		margin: -4px 0 var(--space) 0;
+	}
+	/* Long filenames / ids / hrefs wrap instead of stretching the table. */
+	.wrap {
+		overflow-wrap: anywhere;
 	}
 	table {
 		width: 100%;
