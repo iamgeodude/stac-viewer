@@ -62,7 +62,7 @@
 	<p class="count">{filtered.length} of {collections.length} collections</p>
 	<div class="grid">
 		{#each filtered as c (c.id)}
-			<a class="card" href={`${base}/collections/${encodeURIComponent(c.id)}`}>
+			<a class="card" href={`${base}/collections/${encodeURIComponent(c.id)}?api=${encodeURIComponent($apiUrl)}`}>
 				<h2>{c.title || c.id}</h2>
 				<div class="id"><code>{c.id}</code></div>
 				{#if c.description}

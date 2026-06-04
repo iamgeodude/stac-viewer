@@ -63,6 +63,48 @@ export function buildItemsUrl(root, id, filters = {}) {
 }
 
 /**
+ * The STAC API `POST /search` endpoint to prefer for item queries, or null when
+ * the API doesn't advertise item search (→ caller falls back to GET /items).
+ * Filtering (bbox/datetime/sortby) is reliable via /search but is ignored on
+ * `GET /items` by some servers (e.g. Planetary Computer ignores `bbox`).
+ * @param {string} root
+ * @param {object|null} rootDoc  the API landing page document
+ * @returns {string|null}
+ */
+export function itemSearchUrl(root, rootDoc) {
+	const links = Array.isArray(rootDoc?.links) ? rootDoc.links : [];
+	const searchLinks = links.filter((l) => l && l.rel === 'search' && l.href);
+	// Any `search` link works (we always POST to it); prefer one tagged POST.
+	const link = searchLinks.find((l) => (l.method || '').toUpperCase() === 'POST') || searchLinks[0];
+	if (link?.href) return link.href;
+	const conforms =
+		Array.isArray(rootDoc?.conformsTo) && rootDoc.conformsTo.some((c) => /item-search/i.test(c));
+	return conforms ? `${trimRoot(root)}/search` : null;
+}
+
+/**
+ * Build the page-0 items request. Prefers a `POST /search` link object (reliable
+ * bbox/datetime/sort across STAC API servers) when `searchHref` is given; else a
+ * `GET /items` URL string (OGC Features fallback). Both are consumed by
+ * fetchItemsPage / requestLink, and paging links from either keep working.
+ * @param {string} root
+ * @param {string} id
+ * @param {{ bbox?: number[], datetime?: string, limit?: number }} [filters]
+ * @param {string|null} [searchHref]
+ */
+export function buildItemsRequest(root, id, filters = {}, searchHref = null) {
+	if (searchHref) {
+		const body = { collections: [id] };
+		if (filters.limit) body.limit = filters.limit;
+		if (filters.bbox && filters.bbox.length === 4) body.bbox = filters.bbox;
+		if (filters.datetime) body.datetime = filters.datetime;
+		body.sortby = [{ field: 'id', direction: 'asc' }];
+		return { href: searchHref, method: 'POST', body };
+	}
+	return buildItemsUrl(root, id, filters);
+}
+
+/**
  * Perform a request described by a STAC link (or a plain URL string).
  * Handles GET (the common case) and POST-style paging links.
  */
@@ -76,7 +118,15 @@ async function requestLink(link) {
 			body: JSON.stringify(link.body ?? {})
 		});
 		if (!res.ok) {
-			throw new Error(`Request failed (${res.status} ${res.statusText}) for ${link.href}`);
+			let detail = '';
+			try {
+				detail = await res.text();
+			} catch (_) {
+				/* ignore */
+			}
+			throw new Error(
+				`Request failed (${res.status} ${res.statusText}) for ${link.href}\n${detail}`
+			);
 		}
 		return res.json();
 	}

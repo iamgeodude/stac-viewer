@@ -8,7 +8,8 @@
 	import {
 		fetchCollection,
 		fetchRoot,
-		buildItemsUrl,
+		buildItemsRequest,
+		itemSearchUrl,
 		fetchItemsPage,
 		buildDatetime,
 		collectionBbox,
@@ -31,14 +32,21 @@
 
 	// Catalog name (from the STAC landing page) used as the top download folder.
 	let catalogName = $state('');
+	// The API's POST /search endpoint (null → fall back to GET /items). Filtering
+	// is reliable via /search; some servers (e.g. Planetary Computer) ignore bbox
+	// on GET /items. Derived from the landing page per API.
+	let searchHref = $state(null);
 	$effect(() => {
 		const root = $apiUrl;
+		searchHref = null;
 		fetchRoot(root)
 			.then((r) => {
 				catalogName = r?.id || r?.title || hostnameOf(root);
+				searchHref = itemSearchUrl(root, r);
 			})
 			.catch(() => {
 				catalogName = hostnameOf(root);
+				searchHref = null;
 			});
 	});
 
@@ -517,7 +525,8 @@
 		const bbox = drawnBbox ?? (useMapBounds && mapBounds ? mapBounds : null);
 		if (bbox) filters.bbox = bbox;
 		syncUrl();
-		pageRequests = [buildItemsUrl($apiUrl, id, filters)];
+		// Prefer POST /search (reliable filtering); fall back to GET /items.
+		pageRequests = [buildItemsRequest($apiUrl, id, filters, searchHref)];
 		pageIndex = 0;
 		return loadPage();
 	}

@@ -14,8 +14,14 @@
 	// (the API it was queued from), falling back to the currently-configured
 	// apiUrl for older records that predate apiRoot persistence.
 	const rootFor = (rec) => (rec.apiRoot || $apiUrl || '').replace(/\/+$/, '');
-	const collPageHref = (rec) =>
-		rec.collectionId ? `${base}/collections/${encodeURIComponent(rec.collectionId)}` : null;
+	// Pin the collection link to the record's source API via `?api=` so it opens
+	// the right catalog even if the app is currently pointed at a different one.
+	const collPageHref = (rec) => {
+		if (!rec.collectionId) return null;
+		const api = rec.apiRoot || $apiUrl;
+		const q = api ? `?api=${encodeURIComponent(api)}` : '';
+		return `${base}/collections/${encodeURIComponent(rec.collectionId)}${q}`;
+	};
 	const itemApiHref = (rec) =>
 		rec.collectionId && rec.itemId
 			? `${rootFor(rec)}/collections/${encodeURIComponent(rec.collectionId)}/items/${encodeURIComponent(rec.itemId)}`

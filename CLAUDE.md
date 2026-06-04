@@ -19,7 +19,7 @@ A SvelteKit **single-page app** (Svelte 5 runes) that is a browser-only front en
 
 ### Data flow
 
-- `src/lib/config.js` — the `apiUrl` writable store is the single source of truth for the STAC API root, persisted to `localStorage` (`STORAGE_KEY = 'stac-api-url'`). The layout's top bar edits it; pages re-query reactively via `$effect` when it changes. `DEFAULT_API_URL` is the public "Kentucky From Above" stac-fastapi API (`https://spved5ihrl.execute-api.us-west-2.amazonaws.com`, CORS `*`). **Gotcha:** the default only applies when nothing is saved — an existing browser keeps its stored URL, so after changing `DEFAULT_API_URL` you must click **Reset** in the top bar (or clear localStorage) to actually switch.
+- `src/lib/config.js` — the `apiUrl` writable store is the single source of truth for the STAC API root, persisted to `localStorage` (`STORAGE_KEY = 'stac-api-url'`). The layout's top bar edits it; pages re-query reactively via `$effect` when it changes. **URL-synced:** `+layout.svelte` honors an `?api=<url>` query param — present param → `apiUrl` is set to it (so links can switch catalogs dynamically), and a top-bar Apply/Reset writes `?api=` back (`replaceState`) so the current view is shareable. The store→URL write lives in the top-bar handlers and the URL→store read is a `$effect` that reads the store via `get()` (non-reactive) so the two don't loop. `/downloadQueue` collection links and homepage cards include `?api=` to pin a specific catalog; absent a param, `localStorage` supplies the last API. `DEFAULT_API_URL` is the public "Kentucky From Above" stac-fastapi API (`https://spved5ihrl.execute-api.us-west-2.amazonaws.com`, CORS `*`). **Gotcha:** the default only applies when nothing is saved (and no `?api=`) — an existing browser keeps its stored URL, so after changing `DEFAULT_API_URL` you must click **Reset** in the top bar (or clear localStorage) to actually switch.
 - `src/lib/stac.js` — the only place that talks to the STAC API. Targets STAC API / OGC API Features endpoints (`/`, `/collections`, `/collections/{id}`, `/collections/{id}/items`). Also holds extent/datetime helpers used by the detail page.
 - `src/routes/+page.svelte` — homepage: fetches collections into a filterable card grid.
 - `src/routes/collections/[id]/+page.svelte` — the bulk of the app: collection metadata, map, item query filters, paginated results table, per-asset selection filter, and folder download. See below.
@@ -27,7 +27,7 @@ A SvelteKit **single-page app** (Svelte 5 runes) that is a browser-only front en
 
 ### Items pagination (detail page + stac.js)
 
-Pagination is **token/link-based, not offset-based**. `buildItemsUrl()` builds the page-0 URL from filters; `fetchItemsPage()` fetches a page and returns `{ features, nextLink, numberMatched, numberReturned }`, extracting the `next` link from the response. The detail page keeps a `pageRequests` history stack (page 0 = URL string, later pages = the captured `next` link objects) plus `pageIndex`, so **Previous works even on APIs that only return a `next` link** (e.g. Planetary Computer). `requestLink()` handles both GET and POST-style paging links.
+Pagination is **token/link-based, not offset-based**. `buildItemsRequest(root, id, filters, searchHref)` builds the page-0 request: a **`POST /search` link object** when the API advertises item search (`searchHref` from `itemSearchUrl(root, rootDoc)` — a `search` link or `item-search` conformance), else a **`GET /items` URL string** (OGC Features fallback). `fetchItemsPage()` fetches a page and returns `{ features, nextLink, numberMatched, numberReturned }`, extracting the `next` link from the response. The detail page keeps a `pageRequests` history stack (page 0 = the POST link object or GET URL string, later pages = the captured `next` link objects) plus `pageIndex`, so **Previous works even on APIs that only return a `next` link** (e.g. Planetary Computer). `requestLink()` handles both GET and POST-style paging links (PC's POST `next` link carries a complete body — no merge needed). The detail page resolves `searchHref` once per API from the landing page (`fetchRoot` effect, alongside `catalogName`).
 
 ### Map component (`src/lib/StacMap.svelte`)
 
@@ -63,7 +63,7 @@ Intentionally minimal (white bg, black text, thin borders, grid). All branding v
 
 ## Known API caveat
 
-`buildItemsUrl` sends `sortby=+id` per the STAC Sort extension. Some APIs honor it on GET `/items`; others ignore it (e.g. Planetary Computer only sorts via `POST /search`) — in that case it's a harmless no-op.
+Item queries prefer **`POST /search`** because some servers (notably **Planetary Computer**) **ignore `bbox` — and sortby — on `GET /collections/{id}/items`**, silently returning the collection's default items (so drawing a search box would otherwise do nothing). `POST /search` applies `bbox`/`datetime`/`sortby` reliably. The `GET /items` path remains as a fallback for OGC-Features-only servers that don't advertise item search (no `search` link / `item-search` conformance). `numberMatched` is often absent on PC (the "· N matched" count just won't show).
 
 ## Project state / recent work
 
