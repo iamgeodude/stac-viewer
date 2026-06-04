@@ -1,5 +1,8 @@
 <script>
 	import { page } from '$app/stores';
+	import { replaceState } from '$app/navigation';
+	import { browser } from '$app/environment';
+	import { get } from 'svelte/store';
 	import { apiUrl } from '$lib/config';
 	import {
 		fetchCollection,
@@ -367,6 +370,40 @@
 
 	let initialBbox = $derived(collection ? collectionBbox(collection) : null);
 
+	// --- URL <-> items-search sync (start / end / limit / bbox) ---------------
+	// Seed the search filters from the current URL query string. Read via get()
+	// (non-reactive) so the collection-load effect doesn't depend on the URL —
+	// otherwise every replaceState would re-run it and re-fetch.
+	function readUrlFilters() {
+		if (!browser) return;
+		const p = get(page).url.searchParams;
+		start = p.get('start') ?? '';
+		end = p.get('end') ?? '';
+		const lim = Number(p.get('limit'));
+		if (lim) limit = lim;
+		const bb = p.get('bbox');
+		if (bb) {
+			const a = bb.split(',').map(Number);
+			if (a.length === 4 && a.every(Number.isFinite)) {
+				mapBounds = a;
+				useMapBounds = true;
+			}
+		}
+	}
+
+	// Write the current items-search filters into the URL (shallow, no reload).
+	// Preserves the hash (set by the metadata scroll-spy).
+	function syncUrl() {
+		if (!browser) return;
+		const u = new URL(get(page).url);
+		const p = u.searchParams;
+		start ? p.set('start', start) : p.delete('start');
+		end ? p.set('end', end) : p.delete('end');
+		p.set('limit', String(limit));
+		if (useMapBounds && mapBounds) p.set('bbox', mapBounds.join(',')); else p.delete('bbox');
+		replaceState(u, {});
+	}
+
 	// Load the collection metadata when id / API changes.
 	$effect(() => {
 		const root = $apiUrl;
@@ -397,6 +434,9 @@
 		baseAssets = [];
 		acceptedDuplicates = [];
 		queuedNote = '';
+
+		// Override the reset defaults with any items-search params from the URL.
+		readUrlFilters();
 
 		loadingCollection = true;
 		collectionError = '';
@@ -441,6 +481,7 @@
 			datetime: buildDatetime(start, end)
 		};
 		if (useMapBounds && mapBounds) filters.bbox = mapBounds;
+		syncUrl();
 		pageRequests = [buildItemsUrl($apiUrl, id, filters)];
 		pageIndex = 0;
 		return loadPage();
@@ -477,6 +518,105 @@
 	}
 
 	let temporal = $derived(collection ? collectionInterval(collection) : [null, null]);
+	let spatialBbox = $derived(collection ? collectionBbox(collection) : null);
+
+	// --- Metadata sections: TOC + hash scroll-spy ----------------------------
+	// Which sections to show in the table of contents (only those with data).
+	// Overview / Extent / Downloads are always present.
+	let sections = $derived(
+		!collection
+			? []
+			: [
+					{ id: 'sec-overview', label: 'Overview' },
+					collection.description && { id: 'sec-description', label: 'Description' },
+					{ id: 'sec-extent', label: 'Extent' },
+					collection.providers?.length && { id: 'sec-providers', label: 'Providers' },
+					collection.keywords?.length && { id: 'sec-keywords', label: 'Keywords' },
+					collection.summaries && Object.keys(collection.summaries).length
+						? { id: 'sec-summaries', label: 'Summaries' }
+						: null,
+					{ id: 'sec-downloads', label: 'Downloads' }
+				].filter(Boolean)
+	);
+
+	let metaEl = $state(null); // the scrollable left panel; scroll-spy root
+	let activeSection = $state('');
+
+	// Reflect the scrolled-to section into the URL hash (shallow, no history spam).
+	function setHash(secId) {
+		if (!browser || !secId) return;
+		const u = new URL(get(page).url);
+		if (u.hash === `#${secId}`) return;
+		u.hash = secId;
+		replaceState(u, {});
+	}
+
+	// Height of the sticky TOC (may wrap to multiple rows), used as the offset
+	// line for both scroll-spy and click navigation.
+	function tocHeight() {
+		return metaEl?.querySelector('.cd-toc')?.offsetHeight ?? 0;
+	}
+
+	// Pick the active section deterministically: the last section whose top has
+	// scrolled up to (or past) the line just under the sticky TOC. A bottom clamp
+	// lets a tiny final section activate when scrolled all the way down.
+	function computeActive() {
+		if (!metaEl) return;
+		const els = [...metaEl.querySelectorAll('section[id^="sec-"]')];
+		if (!els.length) return;
+		const base = metaEl.getBoundingClientRect().top + tocHeight() + 1;
+		let current = els[0].id;
+		for (const el of els) {
+			if (el.getBoundingClientRect().top <= base) current = el.id;
+			else break;
+		}
+		if (metaEl.scrollTop + metaEl.clientHeight >= metaEl.scrollHeight - 2) {
+			current = els[els.length - 1].id;
+		}
+		if (current !== activeSection) {
+			activeSection = current;
+			setHash(current);
+		}
+	}
+
+	// Scroll/​resize-driven scroll-spy, re-wired when the section set changes.
+	$effect(() => {
+		sections; // re-run when the section set changes
+		if (!browser || !metaEl) return;
+		let raf = 0;
+		const onScroll = () => {
+			if (raf) return;
+			raf = requestAnimationFrame(() => {
+				raf = 0;
+				computeActive();
+			});
+		};
+		computeActive();
+		metaEl.addEventListener('scroll', onScroll, { passive: true });
+		window.addEventListener('resize', onScroll);
+		return () => {
+			metaEl.removeEventListener('scroll', onScroll);
+			window.removeEventListener('resize', onScroll);
+			if (raf) cancelAnimationFrame(raf);
+		};
+	});
+
+	// Exact click navigation: scroll the section's heading to just under the TOC,
+	// independent of native scroll-margin (which mismatches when the TOC wraps).
+	function gotoSection(e, secId) {
+		e.preventDefault();
+		if (!metaEl) return;
+		const el = metaEl.querySelector('#' + CSS.escape(secId));
+		if (!el) return;
+		const top =
+			el.getBoundingClientRect().top -
+			metaEl.getBoundingClientRect().top +
+			metaEl.scrollTop -
+			tocHeight();
+		metaEl.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+		activeSection = secId;
+		setHash(secId);
+	}
 </script>
 
 {#if loadingCollection}
@@ -490,29 +630,107 @@
 	</div>
 {:else if collection}
 	<div class="cd-split">
-		<div class="cd-meta">
-			<div class="cd-snap cd-info">
-				<p class="back"><a href="/">← All collections</a></p>
-				<h1>{collection.title || collection.id}</h1>
+		<div class="cd-meta" bind:this={metaEl}>
+			<p class="back"><a href="/">← All collections</a></p>
+			<h1>{collection.title || collection.id}</h1>
+
+			<nav class="cd-toc">
+				{#each sections as s (s.id)}
+					<a
+						href="#{s.id}"
+						class:active={activeSection === s.id}
+						onclick={(e) => gotoSection(e, s.id)}>{s.label}</a
+					>
+				{/each}
+			</nav>
+
+			<section id="sec-overview" class="cd-section">
+				<h2>Overview</h2>
 				<div class="meta">
-		<div><label>ID</label><code>{collection.id}</code></div>
-		{#if collection.license}
-			<div><label>License</label>{collection.license}</div>
-		{/if}
-		{#if temporal[0] || temporal[1]}
-			<div>
-				<label>Temporal extent</label>
-				{temporal[0] ?? '…'} → {temporal[1] ?? 'now'}
-			</div>
-		{/if}
-	</div>
+					<div><label>ID</label><code>{collection.id}</code></div>
+					{#if collection.license}
+						<div><label>License</label>{collection.license}</div>
+					{/if}
+					{#if collection.stac_version}
+						<div><label>STAC version</label>{collection.stac_version}</div>
+					{/if}
+				</div>
+			</section>
 
-	{#if collection.description}
-		<p class="desc">{collection.description}</p>
-	{/if}
+			{#if collection.description}
+				<section id="sec-description" class="cd-section">
+					<h2>Description</h2>
+					<p class="desc">{collection.description}</p>
+				</section>
+			{/if}
 
-				<aside class="filters">
-					<h2>Filters</h2>
+			<section id="sec-extent" class="cd-section">
+				<h2>Extent</h2>
+				<h3>Spatial</h3>
+				{#if spatialBbox}
+					<p class="muted">
+						W {spatialBbox[0]}, S {spatialBbox[1]}, E {spatialBbox[2]}, N {spatialBbox[3]}
+					</p>
+				{:else}
+					<p class="muted">—</p>
+				{/if}
+				<h3>Temporal</h3>
+				<p class="muted">{temporal[0] ?? '…'} → {temporal[1] ?? 'now'}</p>
+			</section>
+
+			{#if collection.providers?.length}
+				<section id="sec-providers" class="cd-section">
+					<h2>Providers</h2>
+					<ul class="prov-list">
+						{#each collection.providers as prov (prov.name)}
+							<li>
+								{#if prov.url}
+									<a href={prov.url} target="_blank" rel="noreferrer">{prov.name}</a>
+								{:else}
+									{prov.name}
+								{/if}
+								{#if prov.roles?.length}
+									<span class="muted"> — {prov.roles.join(', ')}</span>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+
+			{#if collection.keywords?.length}
+				<section id="sec-keywords" class="cd-section">
+					<h2>Keywords</h2>
+					<div class="kw-list">
+						{#each collection.keywords as kw (kw)}
+							<span class="kw">{kw}</span>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
+			{#if collection.summaries && Object.keys(collection.summaries).length}
+				<section id="sec-summaries" class="cd-section">
+					<h2>Summaries</h2>
+					<dl class="summary-list">
+						{#each Object.entries(collection.summaries) as [k, v] (k)}
+							<dt>{k}</dt>
+							<dd class="muted">
+								{Array.isArray(v)
+									? v.join(', ')
+									: typeof v === 'object'
+										? JSON.stringify(v)
+										: v}
+							</dd>
+						{/each}
+					</dl>
+				</section>
+			{/if}
+
+			<section id="sec-downloads" class="cd-section">
+				<h2>Downloads</h2>
+
+				<div class="filters">
 			<div class="field">
 				<label for="start">Start date</label>
 				<input id="start" type="date" bind:value={start} />
@@ -562,11 +780,9 @@
 					</ul>
 				</div>
 			{/if}
-				</aside>
-			</div>
+				</div>
 
-			<section class="results cd-snap">
-		<div class="results-head">
+				<div class="results-head">
 			<h2>Items</h2>
 			<div class="pager">
 				<button onclick={checkDisk} disabled={diskChecking || !fsSupported} title="Check which assets already exist in the download folder">
@@ -796,7 +1012,7 @@
 
 <style>
 	.back {
-		margin: 0 0 var(--space) 0;
+		margin: var(--space) 0;
 	}
 	.meta {
 		display: flex;
@@ -822,8 +1038,9 @@
 		overflow-y: auto;
 		min-height: 0; /* allow the grid item to shrink so it can scroll */
 		border-right: var(--border);
-		padding: var(--space);
-		scroll-snap-type: y proximity;
+		/* No top padding: keeps the sticky TOC flush with the global topbar. */
+		padding: 0 var(--space) var(--space);
+		scroll-behavior: smooth;
 	}
 	.cd-map {
 		min-height: 0;
@@ -833,19 +1050,77 @@
 		min-height: 0;
 		border: none;
 	}
-	/* Snap children: metadata/filters block, then the items list (fills pane). */
-	.cd-snap {
-		scroll-snap-align: start;
+	/* Table-of-contents nav: sticky at the top of the scrollable metadata pane. */
+	.cd-toc {
+		position: sticky;
+		top: 0;
+		z-index: 5;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 10px;
+		padding: 8px 0;
+		margin-bottom: var(--space);
+		background: var(--color-bg);
+		border-bottom: var(--border);
 	}
-	.cd-info {
+	.cd-toc a {
+		font-size: 12px;
+		color: var(--color-muted);
+		text-decoration: none;
+	}
+	.cd-toc a:hover {
+		color: var(--color-fg);
+	}
+	.cd-toc a.active {
+		color: var(--color-fg);
+		font-weight: 600;
+		text-decoration: underline;
+	}
+	/* Each metadata section is hash-addressable; offset headings below the TOC. */
+	.cd-section {
 		padding-bottom: var(--space);
+		margin-bottom: var(--space);
+		scroll-margin-top: 44px;
+	}
+	.cd-section > h2 {
+		font-size: 15px;
+		margin: 0 0 8px 0;
+	}
+	.cd-section > h3 {
+		font-size: 13px;
+		margin: 10px 0 4px 0;
+	}
+	.prov-list {
+		margin: 0;
+		padding-left: 18px;
+		font-size: 13px;
+	}
+	.kw-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+	}
+	.kw {
+		border: var(--border);
+		padding: 0 6px;
+		font-size: 11px;
+		line-height: 1.7;
+	}
+	.summary-list {
+		margin: 0;
+		font-size: 12px;
+	}
+	.summary-list dt {
+		font-weight: 600;
+	}
+	.summary-list dd {
+		margin: 0 0 6px 0;
+		word-break: break-word;
 	}
 	.filters {
 		border: var(--border);
 		padding: var(--space);
-	}
-	.filters h2 {
-		font-size: 14px;
+		margin-bottom: 12px;
 	}
 	.field {
 		margin-bottom: 12px;
@@ -890,10 +1165,8 @@
 		padding-left: 18px;
 		font-size: 12px;
 	}
-	.results {
-		min-height: 100%; /* fills the pane so the items list snaps to a full screen */
-	}
 	.results-head {
+		margin-top: 12px;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
