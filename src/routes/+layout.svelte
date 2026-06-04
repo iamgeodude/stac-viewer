@@ -1,7 +1,10 @@
 <script>
 	import '../app.css';
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { page } from '$app/stores';
+	import { replaceState } from '$app/navigation';
+	import { browser } from '$app/environment';
 	import { base } from '$app/paths';
 	import { apiUrl, DEFAULT_API_URL } from '$lib/config';
 	import DownloadWidget from '$lib/DownloadWidget.svelte';
@@ -19,14 +22,42 @@
 	// Local editable copy of the API URL; committed on "Apply".
 	let draft = $state($apiUrl);
 
+	// URL → store: the active STAC API is dynamic from an `?api=<url>` query param,
+	// so /downloadQueue links can switch the app to another catalog. Read the store
+	// non-reactively (get) so this fires only on URL changes, not on store changes
+	// (which would fight the top-bar edits below). localStorage still persists the
+	// last API when no `?api=` is present.
+	$effect(() => {
+		if (!browser) return;
+		const api = $page.url.searchParams.get('api');
+		if (api && /^https?:\/\//i.test(api) && api !== get(apiUrl)) {
+			apiUrl.set(api);
+			draft = api;
+		}
+	});
+
+	// store → URL: reflect a chosen API into `?api=` so the current page is
+	// shareable and stays pinned to its catalog.
+	function syncApiToUrl(value) {
+		if (!browser) return;
+		const u = new URL(get(page).url);
+		if (u.searchParams.get('api') === value) return;
+		u.searchParams.set('api', value);
+		replaceState(u, {});
+	}
+
 	function apply() {
 		const v = draft.trim();
-		if (v) $apiUrl = v;
+		if (v) {
+			$apiUrl = v;
+			syncApiToUrl(v);
+		}
 	}
 
 	function reset() {
 		draft = DEFAULT_API_URL;
 		$apiUrl = DEFAULT_API_URL;
+		syncApiToUrl(DEFAULT_API_URL);
 	}
 </script>
 
